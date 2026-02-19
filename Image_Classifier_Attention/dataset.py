@@ -41,9 +41,9 @@ class WSIDataset(Dataset):
         
         # Verify all h5 files exist
         self.valid_indices = []
-        for idx, row in self.metadata_df.iterrows():
+        for pos, (_, row) in enumerate(self.metadata_df.iterrows()):
             if Path(row['h5_path']).exists():
-                self.valid_indices.append(idx)
+                self.valid_indices.append(pos)
         
         print(f"Found {len(self.valid_indices)} valid slides out of {len(self.metadata_df)}")
     
@@ -131,7 +131,8 @@ def get_transforms(augment: bool = True) -> A.Compose:
     if augment:
         transform = A.Compose([
             A.RandomRotate90(p=0.5),
-            A.Flip(p=0.5),
+            A.HorizontalFlip(p=0.5),
+            A.VerticalFlip(p=0.5),
             A.HueSaturationValue(
                 hue_shift_limit=10,
                 sat_shift_limit=20,

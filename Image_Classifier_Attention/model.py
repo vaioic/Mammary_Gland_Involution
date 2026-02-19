@@ -20,13 +20,9 @@ class FeatureExtractor(nn.Module):
     Extract features from image patches using pre-trained backbone.
     """
     
-    def __init__(
-        self,
-        backbone: str = 'resnet50',
-        pretrained: bool = True,
-        freeze_backbone: bool = False
-    ):
+    def __init__(self, backbone, pretrained, freeze_backbone):
         super().__init__()
+        self.backbone_name = backbone
         
         if backbone == 'resnet50':
             base_model = models.resnet50(pretrained=pretrained)
@@ -42,8 +38,8 @@ class FeatureExtractor(nn.Module):
         elif backbone == 'vit_b_16':
             from torchvision.models import vit_b_16, ViT_B_16_Weights
             base_model = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1 if pretrained else None)
-            # Remove classification head
-            self.features = nn.Sequential(*list(base_model.children())[:-1])
+            base_model.heads = nn.Identity()
+            self.features = base_model
             self.feature_dim = 768
             
         else:
@@ -54,12 +50,8 @@ class FeatureExtractor(nn.Module):
                 param.requires_grad = False
     
     def forward(self, x):
-        """
-        Args:
-            x: (batch_size, channels, height, width)
-        Returns:
-            features: (batch_size, feature_dim)
-        """
+        if self.backbone_name == 'vit_b_16':
+            x = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
         features = self.features(x)
         features = features.view(features.size(0), -1)
         return features

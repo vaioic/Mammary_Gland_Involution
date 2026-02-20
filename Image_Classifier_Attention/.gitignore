@@ -1,2 +1,4 @@
 .vscode
 __pycache__
+*.csv
+comprehensive_test_output

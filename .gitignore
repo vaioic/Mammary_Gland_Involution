@@ -1,5 +1,5 @@
 .vscode
 __pycache__
 .ipynb_checkpoints
-*.csv
+Image_Classifier_Attention/*.csv
 comprehensive_test_output

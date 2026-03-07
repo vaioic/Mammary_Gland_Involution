@@ -9,6 +9,7 @@ import os
 import argparse
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import time
 
 class Registration:
     """ 
@@ -73,7 +74,7 @@ class Registration:
     def get_animal_ids(
             self,
             filtered_anno_df
-    ) -> List[str]:
+    ) -> list[str]:
         animal_ids = filtered_anno_df['AnimalID'].unique().tolist()
         return animal_ids
     
@@ -101,7 +102,7 @@ class Registration:
         minr = min(props, key=lambda p: p.bbox[1])
         maxc = max(props, key=lambda p: p.bbox[2])
         maxr = max(props, key=lambda p: p.bbox[3])
-        img_bbox = img[minc.bbox[0]-10:maxc.bbox[2]+10,minr.bbox[1]-10:maxr.bbox[3]+10]
+        img_bbox = tissue_arr[minc.bbox[0]-10:maxc.bbox[2]+10,minr.bbox[1]-10:maxr.bbox[3]+10]
         labels_bbox = labels[minc.bbox[0]-10:maxc.bbox[2]+10,minr.bbox[1]-10:maxr.bbox[3]+10]
         cropped_mask = (labels_bbox==largest_obj_label)*labels_bbox
         save_path_img = os.path.join(data_path,tissue_id,'cropped_image')
@@ -299,8 +300,8 @@ class Registration:
         Build a translation transform that maps the moving mask centroid
         to the fixed mask centroid, replacing CenteredTransformInitializer.
         """
-        fixed_centroid  = get_mask_centroid(sitk_fixed)
-        moving_centroid = get_mask_centroid(sitk_moving)
+        fixed_centroid  = self.get_mask_centroid(sitk_fixed)
+        moving_centroid = self.get_mask_centroid(sitk_moving)
 
         translation = sitk.TranslationTransform(sitk_moving.GetDimension())
         # SimpleITK transforms map fixed→moving, so the offset is inverted
@@ -350,7 +351,7 @@ class Registration:
             print("  No flip or rotation applied.")
 
         # --- Centroid alignment: moving mask → fixed mask (KEY FIX) ---
-        centroid_transform = get_centroid_alignment_transform(sitk_moving, sitk_fixed)
+        centroid_transform = self.get_centroid_alignment_transform(sitk_moving, sitk_fixed)
         composite_transform.AddTransform(centroid_transform)
 
         return composite_transform
@@ -497,7 +498,7 @@ class Registration:
         if not animal_ids:
             print("No items found.")
             return
-        print(f"Running pipeline on {len(items)} items with {self.workers} workers...\n")
+        print(f"Running pipeline on {len(animal_ids)} items with {self.workers} workers...\n")
         start = time.time()
         run_summary = self.process_in_parallel(animal_ids,
                                                filtered_tile_df,

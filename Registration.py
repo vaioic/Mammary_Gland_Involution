@@ -94,7 +94,8 @@ class Registration:
         tile_df = pd.read_csv(Path(path_to_tile_df),index_col=0,low_memory=False)
         tile_df = tile_df[['Tiles_Image','Tiles_Parent','Tiles_Centroid_X_um','Tiles_Centroid_Y_um','Tiles_Genotype','Tiles_AnimalID']]
         anno_df = pd.read_csv(Path(path_to_anno_df),dtype=str)
-        grey_value_df = pd.read_csv(Path(path_to_grey_value_key),dtype=str,usecols=['Mapping_ID','Map_Grey_value','Tissue_Grey_value'])
+        anno_df['MappingID'].dtype(float)
+        grey_value_df = pd.read_csv(Path(path_to_grey_value_key),dtype=float,usecols=['Mapping_ID','Map_Grey_value','Tissue_Grey_value'])
         filtered_tile_df = tile_df[tile_df['Tiles_Genotype']==genotype]
         filtered_anno_df = anno_df[anno_df['Genotype']==genotype]
         del tile_df, anno_df
@@ -173,8 +174,10 @@ class Registration:
             map_id,
             grey_value_df):
         grey_value = grey_value_df.loc[grey_value_df['Mapping_ID'] == map_id, 'Map_Grey_value'].values[0] 
-        map_region = (map_arr == int(grey_value)).astype(np.float32)
+        map_region = (map_arr == grey_value).astype(np.float32)
         map_region = sc.ndimage.binary_fill_holes(map_region)
+        if not map_region.any():
+            raise ValueError(f"Map region for ID '{map_id}' (grey value {grey_value}) is empty check map image and grey value key.")
         return map_region
     
     def detect_cardinal_point(
@@ -189,7 +192,7 @@ class Registration:
         """
         
         # Create binary mask for this grey value
-        mask = (img_bbox * (img_bbox == int(grey_value))).astype(int)
+        mask = (img_bbox * (img_bbox == grey_value)).astype(int)
             
         if not mask.any():
             print(f"  WARNING: No pixels found for grey value {grey_value} in {name}")
@@ -295,6 +298,8 @@ class Registration:
             rotation = None
         else:
             print('Orientation does not match conditions, check image')
+            filp = None
+            rotation = None
         print(f'Detected Flip: {flip}')
         print(f'Detected Rotation: {rotation}')
         return flip, rotation
@@ -470,12 +475,20 @@ class Registration:
                                                                                                         self.path_to_anno_df,
                                                                                                         self.genotype)
         animal_ids = self.get_animal_ids(filtered_anno_df)
+        start = time.time()
+        run_summary = {"success":0,"failed":0}
         if not animal_ids:
             print("No items found.")
             return
-        print(f"Running pipeline on {len(animal_ids)} items with {os.cpu_count()} workers...\n")
-        for animal in animal_ids:
-            process_data(animal_id, filtered_tile_df, filtered_anno_df, grey_value_df, map_path, data_path)
+        print(f"Running pipeline on {len(animal_ids)} animal datasets...\n")
+        
+        for animal_id in animal_ids:
+            try:
+                process_data(animal_id, filtered_tile_df, filtered_anno_df, grey_value_df, map_path, data_path)
+                run_summary["success"] += 1
+            except Exception as e:
+                print(f" ERROR on animal {animal_id}: {e}")
+                run_summary["failed"] += 1
         elapsed = time.time() - start
         print(f"\nCompleted in {elapsed:.2f}s")
         print(f"\nSummary: {run_summary}")

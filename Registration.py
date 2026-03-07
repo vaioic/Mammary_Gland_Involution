@@ -19,7 +19,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
 
         tile_centroid_df = tile_centroids[tile_centroids['Tiles_AnimalID'] == animal_id]
         anno_df = anno_data[anno_data['AnimalID'] == animal_id]
-
+        spacing = (16.1,16.1)
         # Re-instantiate a Registration object for access to subfunctions
         reg = Registration.__new__(Registration)  # avoids needing all __init__ args
 
@@ -32,7 +32,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
             points = reg.get_cardinal_points(img_bbox,row['Image'],grey_value_df)
             flip, rotation = reg.orient_tissue(points,cropped_mask)
             map_region = reg.get_map_region(map_arr,row['MappingID'],grey_value_df)
-            sitk_fixed, sitk_moving = reg.load_sitk_imgs(map_region,pad_mask_bbox)
+            sitk_fixed, sitk_moving = reg.load_sitk_imgs(map_region,pad_mask_bbox,spacing)
             composite_transform = reg.apply_flip_rotation(sitk_moving,sitk_fixed,flip,rotation)
             transform = reg.refine_registration(sitk_moving,sitk_fixed,composite_transform,data_path,row['Tissue.ID'],row['Image'])
             tile_coordinates = tile_centroid_df[(tile_centroid_df['Tiles_Image']==int(row['Image'])) &
@@ -300,7 +300,7 @@ class Registration:
         print(f'Detected Rotation: {rotation}')
         return flip, rotation
 
-    def load_sitk_imgs(self,map_region,pad_mask_bbox,spacing=(16.1,16.1)):
+    def load_sitk_imgs(self,map_region,pad_mask_bbox,spacing):
         """ Convert array to 32bit float and then to sitk image for registration """
         bitdepth_map = np.array(map_region).astype(np.float32)
         sitk_fixed = sitk.GetImageFromArray(bitdepth_map)

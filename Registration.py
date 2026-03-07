@@ -8,7 +8,6 @@ import pandas as pd
 import os
 import argparse
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 
 def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, data_path):
@@ -38,9 +37,9 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
             tile_coordinates = tile_centroid_df[(tile_centroid_df['Tiles_Image']==int(row['Image'])) &
                                             (tile_centroid_df['Tiles_Parent']==row['Tissue.ID'])]
             reg.transform_points(transform,tile_coordinates,data_path,name)
-        return "success"
+        return "success", name
     except Exception as e:
-        raise RuntimeError(f"Failed processing animal {animal_id}: {e}")
+        raise RuntimeError(f"Failed processing image {name}: {e}")
 
 class Registration:
     """ 
@@ -463,42 +462,6 @@ class Registration:
         tile_df['Tiles_Transformed_Y_um'] = transformed.apply(lambda p: p[1])
         tile_df.to_csv(save_df,index=False)
 
-    
-    def process_in_parallel(self,animal_ids,
-                            tile_centroids,
-                            anno_data,
-                            grey_value_df,
-                            map_path,
-                            data_path) -> dict:
-        futures_map = {}
-        run_summary = {"success": 0, "failed": 0, "skipped": 0}
-        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-            for animal in animal_ids:
-                future = executor.submit(
-                                    process_data,
-                                    animal,
-                                    tile_centroids,
-                                    anno_data,
-                                    grey_value_df,
-                                    map_path,
-                                    data_path
-                                    )
-                futures_map[future] = animal
-
-            for future in as_completed(futures_map):
-                animal = futures_map[future]
-                try:
-                    result = future.result()
-                    if result is None:
-                        run_summary["skipped"] += 1
-                    else:
-                        run_summary["success"] += 1
-                except Exception as e:
-                    print(f"  ERROR on item {animal}: {e}")
-                    run_summary["failed"] += 1
-
-        return run_summary
-
     def run(self):
         data_path, map_path, filtered_tile_df, filtered_anno_df, grey_value_df = self.set_up_pipeline(self.path_to_tissue_masks,
                                                                                                         self.path_to_maps,
@@ -511,14 +474,8 @@ class Registration:
             print("No items found.")
             return
         print(f"Running pipeline on {len(animal_ids)} items with {os.cpu_count()} workers...\n")
-        start = time.time()
-        run_summary = self.process_in_parallel(
-                                    animal_ids, 
-                                    filtered_tile_df, 
-                                    filtered_anno_df, 
-                                    grey_value_df, 
-                                    map_path, 
-                                    data_path)
+        for animal in animal_ids:
+            process_data(animal_id, filtered_tile_df, filtered_anno_df, grey_value_df, map_path, data_path)
         elapsed = time.time() - start
         print(f"\nCompleted in {elapsed:.2f}s")
         print(f"\nSummary: {run_summary}")

@@ -11,6 +11,37 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 
+def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, data_path):
+    try:
+        base_map = anno_data['MapBase'].unique().tolist()
+        base_map_path = os.path.join(map_path, f'{base_map[0]}.png')
+        map_arr = np.array(Image.open(base_map_path).convert('L'))
+
+        tile_centroid_df = tile_centroids[tile_centroids['AnimalID'] == animal_id]
+        anno_df = anno_data[anno_data['AnimalID'] == animal_id]
+
+        # Re-instantiate a Registration object for access to subfunctions
+        reg = Registration.__new__(Registration)  # avoids needing all __init__ args
+
+        for _, row in anno_df.iterrows():
+            name = row['Image']+row['Tissue.ID']
+            tissue_path = os.path.join(data_path,row['Tissue.ID'],row['Image']+'.svs.png')
+            tissue_arr = reg.open_img(tissue_path)
+            img_bbox, cropped_mask = reg.get_tissue_bbox(tissue_arr,row['Image'],row['Tissue.ID'],data_path)
+            _, pad_mask_bbox = reg.add_padding(img_bbox,cropped_mask,row['Image'],row['Tissue.ID'],data_path)
+            points = reg.get_cardinal_points(img_bbox,row['Image'],grey_value_df)
+            flip, rotation = reg.orient_tissue(points,cropped_mask)
+            map_region = reg.get_map_region(map_arr,row['MappingID'],grey_value_df)
+            sitk_fixed, sitk_moving = reg.load_sitk_imgs(map_region,pad_mask_bbox)
+            composite_transform = reg.apply_flip_rotation(sitk_moving,sitk_fixed,flip,rotation)
+            transform = reg.refine_registration(sitk_moving,sitk_fixed,composite_transform,data_path,row['Tissue.ID'],row['Image'])
+            tile_coordinates = tile_centroid_df[(tile_centroid_df['Tiles_Image']==int(row['Image'])) &
+                                            (tile_centroid_df['Tiles_Parent']==row['Tissue.ID'])]
+            reg.transform_points(transform,tile_coordinates,data_path,name)
+            return "success"
+    except Exception as e:
+        raise RuntimeError(f"Failed processing animal {animal_id}: {e}")
+
 class Registration:
     """ 
     Register each tissue mask to its corresponding map region and then use the transformation matrix
@@ -430,28 +461,6 @@ class Registration:
         tile_df['Tiles_Transformed_X_um'] = transformed.apply(lambda p: p[0])
         tile_df['Tiles_Transformed_Y_um'] = transformed.apply(lambda p: p[1])
         tile_df.to_csv(save_df,index=False)
-        
-    def process_data(self,filtered_tile_df,animal_id,filtered_anno_df,grey_value_df,map_path,data_path):
-        base_map = filtered_anno_df['MapBase'].unique().tolist()
-        base_map_path = os.path.join(map_path,f'{base_map[0]}.png')
-        map_arr = self.open_img(base_map_path)
-        tile_centroid_df = filtered_tile_df[filtered_tile_df['AnimalID']==animal_id]
-        anno_df = filtered_anno_df[filtered_anno_df['AnimalID']==animal_id]
-        for _, row in anno_df.iterrows():
-            name = row['Image']+row['Tissue.ID']
-            tissue_path = os.path.join(data_path,row['Tissue.ID'],row['Image']+'.svs.png')
-            tissue_arr = self.open_img(tissue_path)
-            img_bbox, cropped_mask = self.get_tissue_bbox(tissue_arr,row['Image'],row['Tissue.ID'],data_path)
-            _, pad_mask_bbox = self.add_padding(img_bbox,cropped_mask,row['Image'],row['Tissue.ID'],data_path)
-            points = self.get_cardinal_points(img_bbox,row['Image'],grey_value_df)
-            flip, rotation = self.orient_tissue(points,cropped_mask)
-            map_region = self.get_map_region(map_arr,row['MappingID'],grey_value_df)
-            sitk_fixed, sitk_moving = self.load_sitk_imgs(map_region,pad_mask_bbox)
-            composite_transform = self.apply_flip_rotation(sitk_moving,sitk_fixed,flip,rotation)
-            transform = self.refine_registration(sitk_moving,sitk_fixed,composite_transform,data_path,row['Tissue.ID'],row['Image'])
-            tile_coordinates = tile_centroid_df[(tile_centroid_df['Tiles_Image']==int(row['Image'])) &
-                                            (tile_centroid_df['Tiles_Parent']==row['Tissue.ID'])]
-            self.transform_points(transform,tile_coordinates,data_path,name)
 
     
     def process_in_parallel(self,animal_ids,
@@ -464,13 +473,15 @@ class Registration:
         run_summary = {"success": 0, "failed": 0, "skipped": 0}
         with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
             for animal in animal_ids:
-                future = executor.submit(self.process_data(tile_centroids,
-                                                           anno_data,
-                                                           grey_value_df,
-                                                           map_path,
-                                                           data_path,
-                                                           animal_id=animal), 
-                                                           animal)
+                future = executor.submit(
+                                    process_data,
+                                    animal,
+                                    tile_centroids,
+                                    anno_data,
+                                    grey_value_df,
+                                    map_path,
+                                    data_path
+                                    )
                 futures_map[future] = animal
 
             for future in as_completed(futures_map):
@@ -498,19 +509,19 @@ class Registration:
         if not animal_ids:
             print("No items found.")
             return
-        print(f"Running pipeline on {len(animal_ids)} items with {self.workers} workers...\n")
+        print(f"Running pipeline on {len(animal_ids)} items with {os.cpu_count()} workers...\n")
         start = time.time()
-        run_summary = self.process_in_parallel(animal_ids,
-                                               filtered_tile_df,
-                                               filtered_anno_df,
-                                               grey_value_df,
-                                               map_path,
-                                               data_path)
+        run_summary = self.process_in_parallel(
+                                    animal_ids, 
+                                    filtered_tile_df, 
+                                    filtered_anno_df, 
+                                    grey_value_df, 
+                                    map_path, 
+                                    data_path)
         elapsed = time.time() - start
-        print(f"\nCompleted {len(run_summary)} items in {elapsed:.2f}s")
-        print(f"\nFinal results:")
-        for r in sorted(run_summary, key=lambda x: x["item"]):
-            print(f"  {r}")
+        print(f"\nCompleted in {elapsed:.2f}s")
+        print(f"\nSummary: {run_summary}")
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Register tissue masks to corresponding map regions and transform tile centroids for respective tissue')

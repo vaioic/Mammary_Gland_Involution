@@ -38,7 +38,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
             tile_coordinates = tile_centroid_df[(tile_centroid_df['Tiles_Image']==int(row['Image'])) &
                                             (tile_centroid_df['Tiles_Parent']==row['Tissue.ID'])]
             reg.transform_points(transform,tile_coordinates,data_path,name)
-            return "success"
+        return "success"
     except Exception as e:
         raise RuntimeError(f"Failed processing animal {animal_id}: {e}")
 
@@ -55,7 +55,6 @@ class Registration:
             path_to_grey_value_key: str,
             path_to_tile_df: str,
             path_to_anno_df: str,
-            spacing: Tuple[int,int],
             genotype: str
     ):
         self.path_to_tissue_masks = path_to_tissue_masks
@@ -63,7 +62,6 @@ class Registration:
         self.path_to_grey_value_key = path_to_grey_value_key
         self.path_to_tile_df = path_to_tile_df
         self.path_to_anno_df = path_to_anno_df
-        self.spacing = spacing
         self.genotype = genotype if genotype != None else 'WT'
 
     def set_up_pipeline(
@@ -453,7 +451,9 @@ class Registration:
         return full_composite
     
     def transform_points(self,transform,tile_df,path_to_tissue_masks,name):
-        save_df = os.path.join(path_to_tissue_masks,'Transformed_Coordinates',name+'_Transformed_Coordinates.csv')
+        save_path = os.path.join(path_to_tissue_masks,'Transformed_Coordinates')
+        os.makedirs(save_path,exist_ok=True)
+        save_df = os.path.join(save_path,name+'_Transformed_Coordinates.csv')
         inverse_transform = transform.GetInverse()
         transformed = tile_df.apply(
             lambda row: inverse_transform.TransformPoint((row['Tiles_Centroid_X_um'], row['Tiles_Centroid_Y_um'])),

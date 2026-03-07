@@ -98,7 +98,6 @@ class Registration:
         grey_value_df = pd.read_csv(Path(path_to_grey_value_key),dtype=str,usecols=['Mapping_ID','Map_Grey_value','Tissue_Grey_value'])
         filtered_tile_df = tile_df[tile_df['Tiles_Genotype']==genotype]
         filtered_anno_df = anno_df[anno_df['Genotype']==genotype]
-        del tile_df, anno_df
         return data_path, map_path, filtered_tile_df, filtered_anno_df, grey_value_df
     
     def get_animal_ids(

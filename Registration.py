@@ -93,11 +93,12 @@ class Registration:
         data_path = Path(path_to_tissue_masks)
         map_path = Path(path_to_maps)
         tile_df = pd.read_csv(Path(path_to_tile_df),index_col=0,low_memory=False)
-        tiles_df = tiles_df[['Tiles_Image','Tiles_Parent','Tiles_Centroid_X_um','Tiles_Centroid_Y_um','Tiles_Genotype','Tiles_AnimalID']]
+        tile_df = tile_df[['Tiles_Image','Tiles_Parent','Tiles_Centroid_X_um','Tiles_Centroid_Y_um','Tiles_Genotype','Tiles_AnimalID']]
         anno_df = pd.read_csv(Path(path_to_anno_df),dtype=str)
         grey_value_df = pd.read_csv(Path(path_to_grey_value_key),dtype=str,usecols=['Mapping_ID','Map_Grey_value','Tissue_Grey_value'])
         filtered_tile_df = tile_df[tile_df['Tiles_Genotype']==genotype]
         filtered_anno_df = anno_df[anno_df['Genotype']==genotype]
+        del tile_df, anno_df
         return data_path, map_path, filtered_tile_df, filtered_anno_df, grey_value_df
     
     def get_animal_ids(

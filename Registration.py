@@ -300,7 +300,7 @@ class Registration:
         print(f'Detected Rotation: {rotation}')
         return flip, rotation
 
-    def load_sitk_imgs(self,map_region,pad_mask_bbox,spacing=16.1):
+    def load_sitk_imgs(self,map_region,pad_mask_bbox,spacing=(16.1,16.1)):
         """ Convert array to 32bit float and then to sitk image for registration """
         bitdepth_map = np.array(map_region).astype(np.float32)
         sitk_fixed = sitk.GetImageFromArray(bitdepth_map)

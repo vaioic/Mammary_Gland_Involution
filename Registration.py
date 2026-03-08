@@ -96,8 +96,9 @@ class Registration:
         tile_df = pd.read_csv(Path(path_to_tile_df),index_col=0,low_memory=False)
         tile_df = tile_df[['Tiles_Image','Tiles_Parent','Tiles_Centroid_X_um','Tiles_Centroid_Y_um','Tiles_Genotype','Tiles_AnimalID']]
         anno_df = pd.read_csv(Path(path_to_anno_df),dtype=str)
-        grey_value_df = pd.read_csv(Path(path_to_grey_value_key),dtype=float,usecols=['Mapping_ID','Map_Grey_value','Tissue_Grey_value'])
-        grey_value_df['Mapping_ID'] = grey_value_df['Mapping_ID'].astype(str)
+        grey_value_df = pd.read_csv(Path(path_to_grey_value_key),dtype=str,usecols=['Mapping_ID','Map_Grey_value','Tissue_Grey_value'])
+        grey_value_df['Map_Grey_value'] = grey_value_df['Map_Grey_value'].astype(float)
+        grey_value_df['Tissue_Grey_value'] = grey_value_df['Tissue_Grey_value'].astype(float)
         filtered_tile_df = tile_df[tile_df['Tiles_Genotype']==genotype]
         filtered_anno_df = anno_df[anno_df['Genotype']==genotype]
         del tile_df, anno_df
@@ -481,7 +482,7 @@ class Registration:
         fig, ax = plt.subplots()
         ax.invert_yaxis()
         for i, df in enumerate(dfs):
-            ax.scatter(df['Tiles_Transformed_X_um'],df['Tiles_Transformed_Y_um'],c=color_list[i % len(color_list])
+            ax.scatter(df['Tiles_Transformed_X_um'],df['Tiles_Transformed_Y_um'],c=color_list[i % len(color_list)])
         fig.savefig(save_plot, dpi=600)
             
 

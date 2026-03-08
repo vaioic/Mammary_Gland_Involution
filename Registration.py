@@ -9,6 +9,7 @@ import os
 import argparse
 from pathlib import Path
 import time
+import matplotlib.pyplot as plt
 
 def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, data_path):
     try:
@@ -21,7 +22,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
         spacing = (16.1,16.1)
         # Re-instantiate a Registration object for access to subfunctions
         reg = Registration.__new__(Registration)  # avoids needing all __init__ args
-
+        saved_dfs = []
         for _, row in anno_df.iterrows():
             name = row['Image']+'_'+row['Tissue.ID']
             tissue_path = os.path.join(data_path,row['Tissue.ID'],row['Image']+'.svs.png')
@@ -36,7 +37,8 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
             transform = reg.refine_registration(sitk_moving,sitk_fixed,composite_transform,data_path,row['Tissue.ID'],row['Image'])
             tile_coordinates = tile_centroid_df[(tile_centroid_df['Tiles_Image']==int(row['Image'])) &
                                             (tile_centroid_df['Tiles_Parent']==row['Tissue.ID'])]
-            reg.transform_points(transform,tile_coordinates,data_path,name)
+            saved_dfs.append(reg.transform_points(transform,tile_coordinates,data_path,name))
+        reg.plot_transformed_points(saved_dfs,data_path,animal_id)
         return "success", name
     except Exception as e:
         raise RuntimeError(f"Failed processing image {name}: {e}")
@@ -466,6 +468,22 @@ class Registration:
         tile_df['Tiles_Transformed_X_um'] = transformed.apply(lambda p: p[0])
         tile_df['Tiles_Transformed_Y_um'] = transformed.apply(lambda p: p[1])
         tile_df.to_csv(save_df,index=False)
+        return save_df
+
+    def plot_transformed_points(self,saved_dfs,data_path,animal_id):
+        dfs = []
+        save_path = os.path.join(data_path,'Scatter_plots')
+        save_plot = os.path.join(save_path,"transformed_coordnates_"+animal_id+".png")
+        os.makdirs(save_path,exist_ok=True)
+        for df in saved_dfs:
+            dfs.append(pd.read_csv(df,dtype=float,usecols=['Tiles_Transformed_X_um','Tiles_Transformed_Y_um']))
+        color_list = ['b','g','m','c','y','k','r']
+        fig, ax = plt.subplots()
+        ax.invert_yaxis()
+        for i in enumerate(dfs):
+            ax.scatter(dfs[i]['Tiles_Transformed_X_um'],df1['Tiles_Transformed_Y_um'],c=color_list[i])
+        fig.savefig(save_plot, dpi=600)
+            
 
     def run(self):
         data_path, map_path, filtered_tile_df, filtered_anno_df, grey_value_df = self.set_up_pipeline(self.path_to_tissue_masks,

@@ -480,9 +480,9 @@ class Registration:
             dfs.append(pd.read_csv(df,dtype=float,usecols=['Tiles_Transformed_X_um','Tiles_Transformed_Y_um']))
         color_list = ['b','g','m','c','y','k','r']
         fig, ax = plt.subplots()
-        ax.invert_yaxis()
         for i, df in enumerate(dfs):
             ax.scatter(df['Tiles_Transformed_X_um'],df['Tiles_Transformed_Y_um'],c=color_list[i % len(color_list)])
+        ax.invert_yaxis()
         fig.savefig(save_plot, dpi=600)
             
 

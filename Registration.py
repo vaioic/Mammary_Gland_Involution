@@ -474,14 +474,14 @@ class Registration:
         dfs = []
         save_path = os.path.join(data_path,'Scatter_plots')
         save_plot = os.path.join(save_path,"transformed_coordnates_"+animal_id+".png")
-        os.makdirs(save_path,exist_ok=True)
+        os.makedirs(save_path,exist_ok=True)
         for df in saved_dfs:
             dfs.append(pd.read_csv(df,dtype=float,usecols=['Tiles_Transformed_X_um','Tiles_Transformed_Y_um']))
         color_list = ['b','g','m','c','y','k','r']
         fig, ax = plt.subplots()
         ax.invert_yaxis()
-        for i in enumerate(dfs):
-            ax.scatter(dfs[i]['Tiles_Transformed_X_um'],df1['Tiles_Transformed_Y_um'],c=color_list[i])
+        for i, df in enumerate(dfs):
+            ax.scatter(df['Tiles_Transformed_X_um'],df['Tiles_Transformed_Y_um'],c=color_list[i % len(color_list])
         fig.savefig(save_plot, dpi=600)
             
 

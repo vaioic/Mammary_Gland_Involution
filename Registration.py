@@ -23,7 +23,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
         reg = Registration.__new__(Registration)  # avoids needing all __init__ args
 
         for _, row in anno_df.iterrows():
-            name = row['Image']+row['Tissue.ID']
+            name = row['Image']+'_'+row['Tissue.ID']
             tissue_path = os.path.join(data_path,row['Tissue.ID'],row['Image']+'.svs.png')
             tissue_arr = reg.open_img(tissue_path)
             img_bbox, cropped_mask = reg.get_tissue_bbox(tissue_arr,row['Image'],row['Tissue.ID'],data_path)

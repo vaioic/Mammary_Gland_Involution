@@ -23,25 +23,56 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
         # Re-instantiate a Registration object for access to subfunctions
         reg = Registration.__new__(Registration)  # avoids needing all __init__ args
         saved_dfs = []
+        map_region_failures = []
+        orientation_failers = []
         for _, row in anno_df.iterrows():
             name = row['Image']+'_'+row['Tissue.ID']
-            tissue_path = os.path.join(data_path,row['Tissue.ID'],row['Image']+'.svs.png')
-            tissue_arr = reg.open_img(tissue_path)
-            img_bbox, cropped_mask = reg.get_tissue_bbox(tissue_arr,row['Image'],row['Tissue.ID'],data_path)
-            _, pad_mask_bbox = reg.add_padding(img_bbox,cropped_mask,row['Image'],row['Tissue.ID'],data_path)
-            points = reg.get_cardinal_points(img_bbox,row['Image'],grey_value_df)
-            flip, rotation = reg.orient_tissue(points,cropped_mask)
-            map_region = reg.get_map_region(map_arr,row['MappingID'],grey_value_df)
+            try:
+                tissue_path = os.path.join(data_path,row['Tissue.ID'],row['Image']+'.svs.png')
+                tissue_arr = reg.open_img(tissue_path)
+                img_bbox, cropped_mask = reg.get_tissue_bbox(tissue_arr,row['Image'],row['Tissue.ID'],data_path)
+                _, pad_mask_bbox = reg.add_padding(img_bbox,cropped_mask,row['Image'],row['Tissue.ID'],data_path)
+                points = reg.get_cardinal_points(img_bbox,row['Image'],grey_value_df)
+            try:
+                flip, rotation = reg.orient_tissue(points,cropped_mask) 
+            except ValueError as e:
+                if "ORIENTATION_MISMATCH" in str(e):
+                    print(f"  Orientation failure logged for {name}")
+                    orientation_failures.append({
+                        'Image': row['Image'],
+                        'Tissue_ID': row['Tissue.ID']
+                    })
+                    continue  # skip to next row
+                raise
+            try:
+                map_region = reg.get_map_region(map_arr,row['MappingID'],grey_value_df)
+          except ValueError:
+            print(f"  Map region failure logged for {name}")
+            map_region_failures.append({
+                'Image': row['Image'],
+                'Mapping_ID': row['MappingID'],
+                'Map_Base': base_map[0]
+            })
+                continue  # skip to next row
             sitk_fixed, sitk_moving = reg.load_sitk_imgs(map_region,pad_mask_bbox,spacing)
             composite_transform = reg.apply_flip_rotation(sitk_moving,sitk_fixed,flip,rotation)
             transform = reg.refine_registration(sitk_moving,sitk_fixed,composite_transform,data_path,row['Tissue.ID'],row['Image'])
             tile_coordinates = tile_centroid_df[(tile_centroid_df['Tiles_Image']==int(row['Image'])) &
                                             (tile_centroid_df['Tiles_Parent']==row['Tissue.ID'])]
             saved_dfs.append(reg.transform_points(transform,tile_coordinates,data_path,name))
-        reg.plot_transformed_points(saved_dfs,data_path,animal_id)
-        return "success", name
+        except Exception as e:
+                raise RuntimeError(f"Failed processing image {name}: {e}")
+
+        # --- Write QC logs ---
+        reg.write_qc_logs(map_region_failures, orientation_failures, data_path, animal_id)
+
+        if saved_dfs:
+            reg.plot_transformed_points(saved_dfs, data_path, animal_id)
+
+        return "success", animal_id
+
     except Exception as e:
-        raise RuntimeError(f"Failed processing image {name}: {e}")
+        raise RuntimeError(f"Failed processing animal {animal_id}: {e}")
 
 class Registration:
     """ 
@@ -103,7 +134,24 @@ class Registration:
         filtered_anno_df = anno_df[anno_df['Genotype']==genotype]
         del tile_df, anno_df
         return data_path, map_path, filtered_tile_df, filtered_anno_df, grey_value_df
+        
+    def write_qc_logs(self, map_region_failures, orientation_failures, data_path, animal_id):
+        qc_path = os.path.join(data_path, 'QC_logs')
+        os.makedirs(qc_path, exist_ok=True)
     
+        if map_region_failures:
+            map_df = pd.DataFrame(map_region_failures)
+            map_df.to_csv(os.path.join(qc_path, f'{animal_id}_map_region_failures.csv'), index=False)
+            print(f"  {len(map_region_failures)} map region failure(s) written for {animal_id}")
+    
+        if orientation_failures:
+            orient_df = pd.DataFrame(orientation_failures)
+            orient_df.to_csv(os.path.join(qc_path, f'{animal_id}_orientation_failures.csv'), index=False)
+            print(f"  {len(orientation_failures)} orientation failure(s) written for {animal_id}")
+    
+        if not map_region_failures and not orientation_failures:
+            print(f"  No QC failures for {animal_id}")
+        
     def get_animal_ids(
             self,
             filtered_anno_df
@@ -303,6 +351,7 @@ class Registration:
             print('Orientation does not match conditions, check image')
             flip = None
             rotation = None
+            raise ValueError(f"ORIENTATION_MISMATCH")
         print(f'Detected Flip: {flip}')
         print(f'Detected Rotation: {rotation}')
         return flip, rotation

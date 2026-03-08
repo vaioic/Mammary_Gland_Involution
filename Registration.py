@@ -16,54 +16,59 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
         base_map = anno_data['MapBase'].unique().tolist()
         base_map_path = os.path.join(map_path, f'{base_map[0]}.png')
         map_arr = np.array(Image.open(base_map_path).convert('L'))
-
         tile_centroid_df = tile_centroids[tile_centroids['Tiles_AnimalID'] == animal_id]
         anno_df = anno_data[anno_data['AnimalID'] == animal_id]
-        spacing = (16.1,16.1)
-        # Re-instantiate a Registration object for access to subfunctions
-        reg = Registration.__new__(Registration)  # avoids needing all __init__ args
+        spacing = (16.1, 16.1)
+        reg = Registration.__new__(Registration)
         saved_dfs = []
         map_region_failures = []
-        orientation_failers = []
+        orientation_failures = []  # Bug 1 fixed
+
         for _, row in anno_df.iterrows():
-            name = row['Image']+'_'+row['Tissue.ID']
-            try:
-                tissue_path = os.path.join(data_path,row['Tissue.ID'],row['Image']+'.svs.png')
+            name = row['Image'] + '_' + row['Tissue.ID']
+            try:                                          #  outer row try
+                tissue_path = os.path.join(data_path, row['Tissue.ID'], row['Image'] + '.svs.png')
                 tissue_arr = reg.open_img(tissue_path)
-                img_bbox, cropped_mask = reg.get_tissue_bbox(tissue_arr,row['Image'],row['Tissue.ID'],data_path)
-                _, pad_mask_bbox = reg.add_padding(img_bbox,cropped_mask,row['Image'],row['Tissue.ID'],data_path)
-                points = reg.get_cardinal_points(img_bbox,row['Image'],grey_value_df)
-            try:
-                flip, rotation = reg.orient_tissue(points,cropped_mask) 
-            except ValueError as e:
-                if "ORIENTATION_MISMATCH" in str(e):
-                    print(f"  Orientation failure logged for {name}")
-                    orientation_failures.append({
+                img_bbox, cropped_mask = reg.get_tissue_bbox(tissue_arr, row['Image'], row['Tissue.ID'], data_path)
+                _, pad_mask_bbox = reg.add_padding(img_bbox, cropped_mask, row['Image'], row['Tissue.ID'], data_path)
+                points = reg.get_cardinal_points(img_bbox, row['Image'], grey_value_df)
+
+                try:                                      #  orientation try
+                    flip, rotation = reg.orient_tissue(points, cropped_mask)
+                except ValueError as e:
+                    if "ORIENTATION_MISMATCH" in str(e):
+                        print(f"  Orientation failure logged for {name}")
+                        orientation_failures.append({
+                            'Image': row['Image'],
+                            'Tissue_ID': row['Tissue.ID']
+                        })
+                        continue
+                    raise
+
+                try:                                      #  map region try
+                    map_region = reg.get_map_region(map_arr, row['MappingID'], grey_value_df)
+                except ValueError:
+                    print(f"  Map region failure logged for {name}")
+                    map_region_failures.append({
                         'Image': row['Image'],
-                        'Tissue_ID': row['Tissue.ID']
+                        'Mapping_ID': row['MappingID'],
+                        'Map_Base': base_map[0]
                     })
-                    continue  # skip to next row
-                raise
-            try:
-                map_region = reg.get_map_region(map_arr,row['MappingID'],grey_value_df)
-          except ValueError:
-            print(f"  Map region failure logged for {name}")
-            map_region_failures.append({
-                'Image': row['Image'],
-                'Mapping_ID': row['MappingID'],
-                'Map_Base': base_map[0]
-            })
-                continue  # skip to next row
-            sitk_fixed, sitk_moving = reg.load_sitk_imgs(map_region,pad_mask_bbox,spacing)
-            composite_transform = reg.apply_flip_rotation(sitk_moving,sitk_fixed,flip,rotation)
-            transform = reg.refine_registration(sitk_moving,sitk_fixed,composite_transform,data_path,row['Tissue.ID'],row['Image'])
-            tile_coordinates = tile_centroid_df[(tile_centroid_df['Tiles_Image']==int(row['Image'])) &
-                                            (tile_centroid_df['Tiles_Parent']==row['Tissue.ID'])]
-            saved_dfs.append(reg.transform_points(transform,tile_coordinates,data_path,name))
-        except Exception as e:
+                    continue
+
+                sitk_fixed, sitk_moving = reg.load_sitk_imgs(map_region, pad_mask_bbox, spacing)
+                composite_transform = reg.apply_flip_rotation(sitk_moving, sitk_fixed, flip, rotation)
+                transform = reg.refine_registration(sitk_moving, sitk_fixed, composite_transform,
+                                                    data_path, row['Tissue.ID'], row['Image'])
+                tile_coordinates = tile_centroid_df[
+                    (tile_centroid_df['Tiles_Image'] == int(row['Image'])) &
+                    (tile_centroid_df['Tiles_Parent'] == row['Tissue.ID'])
+                ]
+                saved_dfs.append(reg.transform_points(transform, tile_coordinates, data_path, name))
+
+            except Exception as e:                        #  outer row except
                 raise RuntimeError(f"Failed processing image {name}: {e}")
 
-        # --- Write QC logs ---
         reg.write_qc_logs(map_region_failures, orientation_failures, data_path, animal_id)
 
         if saved_dfs:
@@ -533,6 +538,7 @@ class Registration:
             ax.scatter(df['Tiles_Transformed_X_um'],df['Tiles_Transformed_Y_um'],c=color_list[i % len(color_list)])
         ax.invert_yaxis()
         fig.savefig(save_plot, dpi=600)
+        plt.close(fig)
             
 
     def run(self):

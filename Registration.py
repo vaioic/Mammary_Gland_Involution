@@ -94,8 +94,8 @@ class Registration:
         tile_df = pd.read_csv(Path(path_to_tile_df),index_col=0,low_memory=False)
         tile_df = tile_df[['Tiles_Image','Tiles_Parent','Tiles_Centroid_X_um','Tiles_Centroid_Y_um','Tiles_Genotype','Tiles_AnimalID']]
         anno_df = pd.read_csv(Path(path_to_anno_df),dtype=str)
-        anno_df['MappingID'].dtype(float)
         grey_value_df = pd.read_csv(Path(path_to_grey_value_key),dtype=float,usecols=['Mapping_ID','Map_Grey_value','Tissue_Grey_value'])
+        grey_value_df['Mapping_ID'] = grey_value_df['Mapping_ID'].astype(str)
         filtered_tile_df = tile_df[tile_df['Tiles_Genotype']==genotype]
         filtered_anno_df = anno_df[anno_df['Genotype']==genotype]
         del tile_df, anno_df
@@ -298,7 +298,7 @@ class Registration:
             rotation = None
         else:
             print('Orientation does not match conditions, check image')
-            filp = None
+            flip = None
             rotation = None
         print(f'Detected Flip: {flip}')
         print(f'Detected Rotation: {rotation}')

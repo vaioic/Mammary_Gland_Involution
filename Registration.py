@@ -18,7 +18,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
         for gland in glands:
             try:        
                 gland_df = anno_df[anno_df['Gland.side'] == gland]
-                map_base = gland_df['MapBase'].unique().tolist()
+                map_base = gland_df['MapBase'].unique().tolist()[0]
                 map_base_path = os.path.join(map_path, f'{map_base}.png')
                 map_arr = np.array(Image.open(map_base_path).convert('L'))
                 tile_centroid_df_animal = tile_centroids[tile_centroids['Tiles_AnimalID'] == animal_id]
@@ -66,7 +66,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                             map_region_failures.append({
                                 'Image': row['Image'],
                                 'Mapping_ID': row['MappingID'],
-                                'Map_Base': map_base[0]
+                                'Map_Base': map_base
                             })
                             continue
 
@@ -84,7 +84,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                         raise RuntimeError(f"Failed processing image {name}: {e}")
                 if saved_dfs:
                     reg.plot_transformed_points(saved_dfs,animal_id,gland,data_path)
-                reg.write_qc_logs(map_region_failures, orientation_failures, cardinal_point_failures, data_path, animal_id)
+                reg.write_qc_logs(map_region_failures, orientation_failures, cardinal_point_failures, data_path, animal_id, gland)
             except Exception as e:
                 print(f"Failed processing gland {gland} for animal {animal_id}: {e}")
                 continue
@@ -154,27 +154,27 @@ class Registration:
         del tile_df, anno_df
         return data_path, map_path, filtered_tile_df, filtered_anno_df, grey_value_df
         
-    def write_qc_logs(self, map_region_failures, orientation_failures, cardinal_point_failures, data_path, animal_id):
+    def write_qc_logs(self, map_region_failures, orientation_failures, cardinal_point_failures, data_path, animal_id, gland):
         qc_path = os.path.join(data_path, 'QC_logs')
         os.makedirs(qc_path, exist_ok=True)
     
         if map_region_failures:
             map_df = pd.DataFrame(map_region_failures)
-            map_df.to_csv(os.path.join(qc_path, f'{animal_id}_map_region_failures.csv'), index=False)
-            print(f"  {len(map_region_failures)} map region failure(s) written for {animal_id}")
+            map_df.to_csv(os.path.join(qc_path, f'{animal_id}_{gland}_map_region_failures.csv'), index=False)
+            print(f"  {len(map_region_failures)} map region failure(s) written for {animal_id} {gland}")
     
         if orientation_failures:
             orient_df = pd.DataFrame(orientation_failures)
-            orient_df.to_csv(os.path.join(qc_path, f'{animal_id}_orientation_failures.csv'), index=False)
-            print(f"  {len(orientation_failures)} orientation failure(s) written for {animal_id}")
+            orient_df.to_csv(os.path.join(qc_path, f'{animal_id}_{gland}_orientation_failures.csv'), index=False)
+            print(f"  {len(orientation_failures)} orientation failure(s) written for {animal_id} {gland}")
             
         if cardinal_point_failures:
             cardinal_df = pd.DataFrame(cardinal_point_failures)
-            cardinal_df.to_csv(os.path.join(qc_path, f'{animal_id}_cardinal_point_failures.csv'), index=False)
-            print(f"  {len(cardinal_point_failures)} cardinal point detection failure(s) written for {animal_id}")
+            cardinal_df.to_csv(os.path.join(qc_path, f'{animal_id}_{gland}_cardinal_point_failures.csv'), index=False)
+            print(f"  {len(cardinal_point_failures)} cardinal point detection failure(s) written for {animal_id} {gland}")
     
         if not map_region_failures and not orientation_failures and not cardinal_point_failures:
-            print(f"  No QC failures for {animal_id}")
+            print(f"  No QC failures for {animal_id} {gland}")
         
     def get_animal_ids(
             self,

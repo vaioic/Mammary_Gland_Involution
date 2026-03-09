@@ -21,7 +21,8 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                 map_base = gland_df['MapBase'].unique().tolist()
                 map_base = map_base[0]
                 if len(map_base) > 1:
-                    print(f'More than one base map detected for {gland} of {animal_id}.')
+                    print(f'''More than one base map detected for {gland} of {animal_id}.
+                                These map bases were detected: {map_base}''')
                     continue
                 map_base_path = os.path.join(map_path, f'{map_base}.png')
                 map_arr = np.array(Image.open(map_base_path).convert('L'))

@@ -27,6 +27,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                 map_arr = np.array(Image.open(map_base_path).convert('L'))
                 map_shape = map_arr.shape()
                 tile_centroid_df = tile_centroids[tile_centroids['Tiles_AnimalID'] == animal_id]
+                tile_centroid_df = tile_centroids[tile_centroids['Tiles_Gland_side'] == gland]
                 spacing = (16.1, 16.1)
                 reg = Registration.__new__(Registration)
                 saved_dfs = []
@@ -78,7 +79,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                         transform = reg.refine_registration(sitk_moving, sitk_fixed, composite_transform,
                                                             data_path, row['Tissue.ID'], row['Image'])
                         tile_coordinates = tile_centroid_df[
-                            (tile_centroid_df['Tiles_Image'] == int(row['Image'])) &
+                            (tile_centroid_df['Tiles_Image'] == row['Image']) &
                             (tile_centroid_df['Tiles_Parent'] == row['Tissue.ID'])
                         ]
                         saved_dfs.append(reg.transform_points(transform, tile_coordinates, data_path, name))
@@ -145,8 +146,9 @@ class Registration:
         """
         data_path = Path(path_to_tissue_masks)
         map_path = Path(path_to_maps)
-        tile_df = pd.read_csv(Path(path_to_tile_df),index_col=0,low_memory=False)
-        tile_df = tile_df[['Tiles_Image','Tiles_Parent','Tiles_Centroid_X_um','Tiles_Centroid_Y_um','Tiles_Genotype','Tiles_AnimalID']]
+        tile_df = pd.read_csv(Path(path_to_tile_df),dtype=str,low_memory=False)
+        tile_df['Tiles_Centroid_X_um'] = tile_df['Tiles_Centroid_X_um'].astype(float) 
+        tile_df['Tiles_Centroid_Y_um'] = tile_df['Tiles_Centroid_Y_um'].astype(float)
         anno_df = pd.read_csv(Path(path_to_anno_df),dtype=str)
         grey_value_df = pd.read_csv(Path(path_to_grey_value_key),dtype=str,usecols=['Mapping_ID','Map_Grey_value','Tissue_Grey_value'])
         grey_value_df['Map_Grey_value'] = grey_value_df['Map_Grey_value'].astype(float)

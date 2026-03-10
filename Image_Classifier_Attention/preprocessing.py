@@ -53,7 +53,7 @@ class ObjectRegion:
 
 
 # ---------------------------------------------------------------------------
-# FIX 1: Thread-local slide handles
+# FIX 1: Thread-local slide handles with explicit cleanup
 # ---------------------------------------------------------------------------
 # Previously _read_patch_worker opened AND closed a new OpenSlide handle on
 # every single patch call.  Opening a slide is expensive (reads the TIFF
@@ -61,9 +61,12 @@ class ObjectRegion:
 # severe overhead on large slide sets.
 #
 # Fix: use threading.local() so each thread opens the slide once and reuses
-# the handle for all patches assigned to that thread.  The slide is only
-# closed when the thread exits via a weakref finaliser registered by
-# _get_thread_slide().
+# the handle for all patches assigned to that thread.
+#
+# Cleanup: read_patches_threaded() calls _close_thread_slides() as a thread
+# initialiser teardown so handles are explicitly closed when each worker
+# thread exits the pool, preventing file-descriptor leaks across repeated
+# calls on the same thread.
 # ---------------------------------------------------------------------------
 
 _thread_local = threading.local()
@@ -84,21 +87,37 @@ def _get_thread_slide(svs_path: str) -> openslide.OpenSlide:
     return cache[svs_path]
 
 
+def _close_thread_slides() -> None:
+    """
+    Close every OpenSlide handle cached on the current thread and clear
+    the cache.  Called as the thread-pool initialiser teardown so that
+    file descriptors are released when worker threads exit.
+    """
+    cache: dict = getattr(_thread_local, "slide_cache", None)
+    if cache:
+        for slide in cache.values():
+            try:
+                slide.close()
+            except Exception:
+                pass
+        cache.clear()
+
+
 def _read_patch_worker(
     svs_path: str,
     slide_x: int,
     slide_y: int,
     level: int,
     patch_size: int,
-) -> Tuple[int, int, np.ndarray]:
+) -> np.ndarray:
     """
     Read one patch from a thread-local slide handle.
-    Returns (slide_x, slide_y, rgb_array).
+    Returns the RGB array only; the caller already knows the index.
     """
     # FIX 1: reuse per-thread handle instead of open/close per call
     slide = _get_thread_slide(svs_path)
     patch = slide.read_region((slide_x, slide_y), level, (patch_size, patch_size))
-    return slide_x, slide_y, np.array(patch.convert('RGB'))
+    return np.array(patch.convert('RGB'))
 
 
 def _process_slide_worker(args: Dict) -> List[Dict]:
@@ -253,8 +272,10 @@ class WSIPreprocessor:
         # stride is always >= 1 because the constructor enforced overlap < patch_size
         stride = self.patch_size - self.overlap
         coords: List[Dict] = []
-        for y in range(0, region.h - self.patch_size, stride):
-            for x in range(0, region.w - self.patch_size, stride):
+        # Use (dim - patch_size + 1) so the final valid start position is
+        # included when the region is an exact multiple of the stride.
+        for y in range(0, region.h - self.patch_size + 1, stride):
+            for x in range(0, region.w - self.patch_size + 1, stride):
                 patch_mask = region.binary_mask[y:y + self.patch_size,
                                                 x:x + self.patch_size]
                 if patch_mask.shape != (self.patch_size, self.patch_size):
@@ -291,6 +312,7 @@ class WSIPreprocessor:
         """
         n = len(coords)
         patches = np.zeros((n, self.patch_size, self.patch_size, 3), dtype=np.uint8)
+        failed: List[int] = []
 
         # FIX 4: use the future's positional index directly instead of a
         # (slide_x, slide_y) lookup dict.  The old approach silently
@@ -298,6 +320,11 @@ class WSIPreprocessor:
         # (slide_x, slide_y) — which can happen with zero-overlap grids
         # after rounding.  Carrying the index in the future avoids the
         # collision entirely and removes the O(N) dict build.
+        #
+        # FIX A (cleanup): submit _close_thread_slides to every worker thread
+        # after all patch work is submitted, then wait for the executor to
+        # finish.  This ensures slide handles are closed on each thread before
+        # the pool tears down, preventing file-descriptor leaks.
         with ThreadPoolExecutor(max_workers=self.patch_read_workers) as executor:
             futures = {
                 executor.submit(
@@ -316,8 +343,32 @@ class WSIPreprocessor:
                 leave=False,
             ):
                 idx = futures[future]          # FIX 4: use index, not coord lookup
-                _, _, patch = future.result()
-                patches[idx] = patch
+                # FIX C: catch per-patch errors so one bad tile cannot abort
+                # the entire object.  Failed slots stay as zeros and are
+                # reported; the HDF5 will still be written for the good patches.
+                try:
+                    patch = future.result()
+                    patches[idx] = patch
+                except Exception as exc:
+                    failed.append(idx)
+                    print(
+                        f"  WARNING: patch {idx} "
+                        f"({coords[idx]['slide_x']},{coords[idx]['slide_y']}) "
+                        f"failed: {exc}"
+                    )
+
+            # Close all thread-local slide handles before the pool shuts down.
+            # submit() to each live thread so _close_thread_slides() runs
+            # on the thread that owns the handle.
+            close_futures = [
+                executor.submit(_close_thread_slides)
+                for _ in range(self.patch_read_workers)
+            ]
+            for f in close_futures:
+                f.result()   # block until all cleanup tasks finish
+
+        if failed:
+            print(f"  {len(failed)}/{n} patches failed and will be zero-filled.")
 
         return patches
 

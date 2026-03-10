@@ -502,7 +502,7 @@ class WSIPreprocessor:
         for _, row in metadata_df.iterrows():
             slide_id  = row['Image']
             svs_path  = svs_dir  / f"{slide_id}.svs"
-            mask_path = mask_dir / f"{slide_id}_mask.png"
+            mask_path = mask_dir / f"{slide_id}.png"
 
             if not svs_path.exists():
                 print(f"Warning: SVS not found: {svs_path}")

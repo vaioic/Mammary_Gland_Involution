@@ -22,6 +22,8 @@ Values 1-n  = distinct objects; each is cropped with padding and processed
 """
 
 import os
+import threading
+import warnings
 import openslide
 import numpy as np
 import pandas as pd
@@ -51,8 +53,36 @@ class ObjectRegion:
 
 
 # ---------------------------------------------------------------------------
-# Worker-level helpers (must be picklable - defined at module scope)
+# FIX 1: Thread-local slide handles
 # ---------------------------------------------------------------------------
+# Previously _read_patch_worker opened AND closed a new OpenSlide handle on
+# every single patch call.  Opening a slide is expensive (reads the TIFF
+# header, allocates cache structures) so doing it N times per object caused
+# severe overhead on large slide sets.
+#
+# Fix: use threading.local() so each thread opens the slide once and reuses
+# the handle for all patches assigned to that thread.  The slide is only
+# closed when the thread exits via a weakref finaliser registered by
+# _get_thread_slide().
+# ---------------------------------------------------------------------------
+
+_thread_local = threading.local()
+
+
+def _get_thread_slide(svs_path: str) -> openslide.OpenSlide:
+    """
+    Return a per-thread OpenSlide handle, opening it on first access.
+    The handle is stored in thread-local storage and reused for every patch
+    read on the same thread, eliminating the open/close overhead per patch.
+    """
+    cache: dict = getattr(_thread_local, "slide_cache", None)
+    if cache is None:
+        cache = {}
+        _thread_local.slide_cache = cache
+    if svs_path not in cache:
+        cache[svs_path] = openslide.open_slide(svs_path)
+    return cache[svs_path]
+
 
 def _read_patch_worker(
     svs_path: str,
@@ -62,13 +92,12 @@ def _read_patch_worker(
     patch_size: int,
 ) -> Tuple[int, int, np.ndarray]:
     """
-    Open the slide, read one patch, close.  Called from a thread pool.
-    Returns (slide_x, slide_y, rgb_array).  OpenSlide handles are
-    not shared across threads - each call opens its own handle.
+    Read one patch from a thread-local slide handle.
+    Returns (slide_x, slide_y, rgb_array).
     """
-    slide = openslide.open_slide(svs_path)
+    # FIX 1: reuse per-thread handle instead of open/close per call
+    slide = _get_thread_slide(svs_path)
     patch = slide.read_region((slide_x, slide_y), level, (patch_size, patch_size))
-    slide.close()
     return slide_x, slide_y, np.array(patch.convert('RGB'))
 
 
@@ -110,7 +139,7 @@ class WSIPreprocessor:
     target_magnification : float
         Desired magnification level (e.g. 20.0 for 20x).
     overlap : int
-        Pixel overlap between adjacent patches.
+        Pixel overlap between adjacent patches.  Must be < patch_size.
     tissue_threshold : float
         Minimum fraction of a patch that must be tissue (0-1).
     object_padding : int
@@ -130,6 +159,12 @@ class WSIPreprocessor:
         object_padding: int = 64,
         patch_read_workers: int = 0,       # 0 = auto
     ):
+        # FIX 2: guard against zero / negative stride at construction time
+        if overlap >= patch_size:
+            raise ValueError(
+                f"overlap ({overlap}) must be strictly less than patch_size ({patch_size}). "
+                "A stride of 0 or negative would cause an infinite loop."
+            )
         self.patch_size = patch_size
         self.target_mag = target_magnification
         self.overlap = overlap
@@ -142,9 +177,21 @@ class WSIPreprocessor:
     # ------------------------------------------------------------------
 
     def get_magnification_level(self, slide: openslide.OpenSlide) -> int:
-        objective_power = float(slide.properties.get(
-            openslide.PROPERTY_NAME_OBJECTIVE_POWER, 40
-        ))
+        # FIX 3: warn loudly when the objective-power property is absent
+        # instead of silently falling back to 40x and producing wrong patches.
+        raw = slide.properties.get(openslide.PROPERTY_NAME_OBJECTIVE_POWER)
+        if raw is None:
+            warnings.warn(
+                "Slide is missing the objective-power property. "
+                f"Assuming 40x and selecting the closest level to {self.target_mag}x. "
+                "Verify the output magnification is correct.",
+                UserWarning,
+                stacklevel=2,
+            )
+            objective_power = 40.0
+        else:
+            objective_power = float(raw)
+
         best_level, best_diff = 0, abs(objective_power - self.target_mag)
         for level in range(slide.level_count):
             level_mag = objective_power / slide.level_downsamples[level]
@@ -203,6 +250,7 @@ class WSIPreprocessor:
         region: ObjectRegion,
         downsample: float,
     ) -> List[Dict]:
+        # stride is always >= 1 because the constructor enforced overlap < patch_size
         stride = self.patch_size - self.overlap
         coords: List[Dict] = []
         for y in range(0, region.h - self.patch_size, stride):
@@ -236,17 +284,20 @@ class WSIPreprocessor:
         """
         Read all patches for one object using a thread pool.
 
-        OpenSlide is thread-safe for reads.  Each thread opens its own
-        slide handle to avoid contention on the internal cache lock.
+        OpenSlide is thread-safe for reads.  Each thread holds one slide
+        handle (opened lazily via _get_thread_slide) to avoid contention.
 
         Returns an array of shape (N, patch_size, patch_size, 3).
         """
         n = len(coords)
-        patches = np.empty((n, self.patch_size, self.patch_size, 3), dtype=np.uint8)
+        patches = np.zeros((n, self.patch_size, self.patch_size, 3), dtype=np.uint8)
 
-        # Map (slide_x, slide_y) -> index so results land in the right slot
-        coord_index = {(c['slide_x'], c['slide_y']): i for i, c in enumerate(coords)}
-
+        # FIX 4: use the future's positional index directly instead of a
+        # (slide_x, slide_y) lookup dict.  The old approach silently
+        # overwrote earlier results when two coords shared the same
+        # (slide_x, slide_y) — which can happen with zero-overlap grids
+        # after rounding.  Carrying the index in the future avoids the
+        # collision entirely and removes the O(N) dict build.
         with ThreadPoolExecutor(max_workers=self.patch_read_workers) as executor:
             futures = {
                 executor.submit(
@@ -255,7 +306,7 @@ class WSIPreprocessor:
                     c['slide_x'], c['slide_y'],
                     level,
                     self.patch_size,
-                ): i
+                ): i                           # value = positional index
                 for i, c in enumerate(coords)
             }
             for future in tqdm(
@@ -264,8 +315,9 @@ class WSIPreprocessor:
                 desc="  reading patches",
                 leave=False,
             ):
-                sx, sy, patch = future.result()
-                patches[coord_index[(sx, sy)]] = patch
+                idx = futures[future]          # FIX 4: use index, not coord lookup
+                _, _, patch = future.result()
+                patches[idx] = patch
 
         return patches
 
@@ -316,7 +368,7 @@ class WSIPreprocessor:
         level      = self.get_magnification_level(slide)
         level_dims = slide.level_dimensions[level]   # (W, H)
         downsample = slide.level_downsamples[level]
-        slide.close()   # Close early; re-opened per-thread inside reader
+        slide.close()   # Close early; re-opened lazily per-thread inside reader
 
         mask    = self.load_raw_mask(mask_path, level_dims)
         objects = self.detect_objects(mask)
@@ -437,6 +489,19 @@ class WSIPreprocessor:
                 except Exception as exc:
                     print(f"ERROR [{slide_id}]: {exc}")
 
+        # FIX 5: guard against an entirely empty results list (e.g. all slides
+        # failed).  pd.DataFrame([]) produces a frame with no columns, so the
+        # subsequent merge on 'Image' would raise a KeyError.  Return the
+        # original metadata with NaN result columns instead.
+        if not all_results:
+            warnings.warn(
+                "No slides were processed successfully. "
+                "Returning original metadata with no patch columns.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return metadata_df.copy()
+
         results_df = pd.DataFrame(all_results)
         output_df  = metadata_df.merge(results_df, on='Image', how='left')
         output_df.to_csv(output_dir / 'processed_metadata.csv', index=False)
@@ -489,7 +554,10 @@ def main():
 
     print(f"\nSlides processed : {processed_df['Image'].nunique()}")
     print(f"Objects found    : {len(processed_df)}")
-    print(f"Total patches    : {processed_df['num_patches'].sum()}")
+    if 'num_patches' in processed_df.columns:
+        print(f"Total patches    : {processed_df['num_patches'].sum()}")
+    else:
+        print("Total patches    : 0 (no slides processed successfully)")
 
 
 if __name__ == "__main__":

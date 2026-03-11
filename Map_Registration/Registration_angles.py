@@ -425,7 +425,7 @@ class Registration:
             rotation_transform.SetAngle(rads)
             composite_transform.AddTransform(rotation_transform)
             
-        if flip is None and rotation is None:
+        if flip is None and rads is None:
             print(" No flip or rotation applied.")
 
         # --- Centroid alignment: moving mask → fixed mask (KEY FIX) ---
@@ -528,7 +528,7 @@ class Registration:
 
     
     def plot_registered_tissue(self,padded_img,map_region,spacing,transform,name,path_to_tissue_masks):
-        sitk_fixed, sitk_moving = reg.load_sitk_imgs(map_region, padded_img, spacing)
+        sitk_fixed, sitk_moving = self.load_sitk_imgs(map_region, padded_img, spacing)
         save_path = os.path.join(path_to_tissue_masks,'Registered_Tissue_Overlays')
         os.makedirs(save_path,exist_ok=True)
         save_img = os.path.join(save_path,name+'_Registered_Overlay.png')

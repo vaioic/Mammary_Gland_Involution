@@ -527,17 +527,17 @@ class Registration:
         plt.close(fig)
 
     
-    def plot_registered_tissue(padded_img,map_region,spacing,transform,name,path_to_tissue_masks):
+    def plot_registered_tissue(self,padded_img,map_region,spacing,transform,name,path_to_tissue_masks):
         sitk_fixed, sitk_moving = reg.load_sitk_imgs(map_region, padded_img, spacing)
         save_path = os.path.join(path_to_tissue_masks,'Registered_Tissue_Overlays')
         os.makedirs(save_path,exist_ok=True)
         save_img = os.path.join(save_path,name+'_Registered_Overlay.png')
         resampled = sitk.Resample(
-                moving_sitk, fixed_sitk, optimized_transform,
-                sitk.sitkNearestNeighbor, 0.0, moving_sitk.GetPixelID()
+                sitk_moving, sitk_fixed, transform,
+                sitk.sitkNearestNeighbor, 0.0, sitk_moving.GetPixelID()
             )
         fig, axes = plt.subplots()
-        fixed  = sitk.GetArrayFromImage(fixed_sitk)
+        fixed  = sitk.GetArrayFromImage(sitk_fixed)
         moved  = sitk.GetArrayFromImage(resampled)
         axes.imshow(fixed, cmap="gray")
         axes.imshow(moved,cmap="Reds",alpha=0.5)

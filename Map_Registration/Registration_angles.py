@@ -221,10 +221,7 @@ class Registration:
             tissue_id,
             data_path
     ):
-        labels = tissue_arr[tissue_arr == 255] = 0
-        # mask = ndimage.binary_fill_holes(mask)
-        # labels = sk.measure.label(mask)
-        props = sk.measure.regionprops(labels)
+        props = sk.measure.regionprops(tissue_arr)
         largest_obj = max(props, key=lambda p: p.area)
         largest_obj_label = largest_obj.label
         minc = min(props, key=lambda p: p.bbox[0])
@@ -232,8 +229,7 @@ class Registration:
         maxc = max(props, key=lambda p: p.bbox[2])
         maxr = max(props, key=lambda p: p.bbox[3])
         img_bbox = tissue_arr[minc.bbox[0]-10:maxc.bbox[2]+10,minr.bbox[1]-10:maxr.bbox[3]+10]
-        labels_bbox = labels[minc.bbox[0]-10:maxc.bbox[2]+10,minr.bbox[1]-10:maxr.bbox[3]+10]
-        cropped_mask = (labels_bbox==largest_obj_label)*labels_bbox
+        cropped_mask = (img_bbox==largest_obj_label)*img_bbox
         cropped_mask = ndimage.binary_fill_holes(cropped_mask)
         save_path_img = os.path.join(data_path,tissue_id,'cropped_image')
         save_path_mask = os.path.join(data_path,tissue_id,'cropped_mask')

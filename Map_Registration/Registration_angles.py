@@ -39,7 +39,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                         img_bbox, cropped_mask = reg.get_tissue_bbox(tissue_arr, row['Image'], row['Tissue.ID'], data_path)
                         pad_img_bbox, pad_mask_bbox = reg.add_padding(img_bbox, cropped_mask, row['Image'], row['Tissue.ID'], data_path)
                         try:
-                            points = reg.get_cardinal_points(pad_img_bbox, name, grey_value_df,'north')
+                            points = reg.get_cardinal_points(pad_img_bbox, name, grey_value_df, ('north', 'east'))
                         except ValueError as e:
                             print(f"  Cardinal Point Detection failure logged for {name}")
                             cardinal_point_failures.append({
@@ -49,7 +49,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                             continue
 
                         try:                                      # orientation try
-                            flip, angle_radians, angle_degrees = reg.orient_tissue(points,name,grey_value_df,pad_img_bbox)
+                            flip, angle_radians, angle_degrees = reg.orient_tissue(points, name, grey_value_df, pad_mask_bbox)
                         except ValueError as e:
                             if "ORIENTATION_MISMATCH" in str(e):
                                 print(f"  Orientation failure logged for {name}")
@@ -267,18 +267,26 @@ class Registration:
         Returns (x, y) in pixel coordinates, or None if not found.
         """
         
-        # Create binary mask for this grey value
-        mask = (img_bbox * (img_bbox == grey_value)).astype(int)
+        # Create binary mask for this grey value.
+        # Use a small tolerance instead of exact equality to avoid failures when images
+        # were saved with lossy settings or resampled previously.
+        gv = float(grey_value)
+        mask = np.abs(img_bbox.astype(np.float32) - gv) <= 1.0
             
         if not mask.any():
             print(f"  WARNING: No pixels found for grey value {grey_value} in {name}")
             return None
         
         # Label connected components and get centroid
-        labeled_img = sk.measure.label(mask)
+        labeled_img = sk.measure.label(mask.astype(np.uint8))
         props = sk.measure.regionprops(labeled_img)
-        cy,cx = props[0].centroid
-        return np.array([int(cy), int(cx)])  # return as (y,x)
+        if not props:
+            print(f"  WARNING: No connected components found for grey value {grey_value} in {name}")
+            return None
+
+        largest = max(props, key=lambda p: p.area)
+        cy, cx = largest.centroid
+        return np.array([cy, cx], dtype=float)  # return as (y,x)
     
     def get_cardinal_points(
             self,
@@ -287,17 +295,29 @@ class Registration:
             grey_value_df,
             direction):
         """
-        Extract both cardinal points from an image.
-        Returns dict with 'north' and 'east' as (y,x) arrays.
+        Extract one or more cardinal points from an image.
+
+        Parameters
+        ----------
+        direction:
+            Either a single direction string (e.g., 'north') or an iterable of
+            directions (e.g., ('north', 'east')).
+
+        Returns
+        -------
+        dict[str, np.ndarray]
+            Keys are directions and values are (y,x) arrays (float).
         """
         points = {}
-        grey = grey_value_df.loc[grey_value_df['Mapping_ID'] == direction, 'Tissue_Grey_value'].values[0]
-        print(f'Grey value for {direction} is {grey}')
-        pt = self.detect_cardinal_point(img_bbox, grey, name)
-        if pt is None:
-            raise ValueError(f"Could not find '{direction}' point in {name}")
-        points[direction] = pt
-        print(f"  {direction}: pixel (y,x) ({pt[0]:.1f}, {pt[1]:.1f})")
+        directions = (direction,) if isinstance(direction, str) else tuple(direction)
+        for d in directions:
+            grey = grey_value_df.loc[grey_value_df['Mapping_ID'] == d, 'Tissue_Grey_value'].values[0]
+            print(f'Grey value for {d} is {grey}')
+            pt = self.detect_cardinal_point(img_bbox, grey, name)
+            if pt is None:
+                raise ValueError(f"Could not find '{d}' point in {name}")
+            points[d] = pt
+            print(f"  {d}: pixel (y,x) ({pt[0]:.1f}, {pt[1]:.1f})")
         return points
     
     def orient_tissue(
@@ -307,54 +327,45 @@ class Registration:
             grey_value_df,
             mask_arr):
         """
-        Determine the flip and/or rotation needed to orient the moving image
-        to match the map, using the N and E cardinal point locations.
-
-        Calculate the angle of rotation to orient north up and then determine if a horizontal flip
-        is needed to place East to the left.
+        Determine the flip and/or rotation needed to orient the moving image so that
+        north points up and east points left.
 
         Parameters
         ----------
-        mask_points  : dict with 'north' and 'east' as (x, y) pixel arrays — moving image
-        moving_image: bbox image np.array of moving image with cardinal points
-        Returns
-        -------
-        rotation angle
-        flip matrix
+        points:
+            dict with 'north' and 'east' as (y,x) pixel arrays in the moving image.
+        mask_arr:
+            Tissue mask array used to compute the tissue centroid (non-zero pixels treated as tissue).
         """
-        # --- Detect required rotation from cardinal point geometry ---
-        # Compare pixel coords directly for orientation — spacing does not
-        # affect which direction is "up" or "right"
+        if 'north' not in points or 'east' not in points:
+            raise ValueError(f"Missing required cardinal points for {name}. Found: {list(points.keys())}")
 
-        # Compute CCW rotation angle needed to bring the north cardinal point to the top of the image.
-        # detect_cardinal_point returns (row, col) = (y, x) in image space (y increases downward).
-        h, w = mask_arr.shape
-        cy, cx = h / 2.0, w / 2.0
+        tissue_pixels = np.argwhere(np.asarray(mask_arr) > 0)
+        if tissue_pixels.size == 0:
+            raise ValueError(f"No tissue mask pixels found for {name}")
+        cy, cx = tissue_pixels.mean(axis=0)  # (y, x)
+
+        # Compute CCW rotation angle needed to bring the north marker above the centroid.
+        # Image coordinates: x increases right, y increases down; "up" is -y.
         y_n, x_n = points['north']
-        dy = y_n - cy   # positive = below center (south)
-        dx = x_n - cx   # positive = right of center (east)
-
-        # atan2(dx, -dy): angle (degrees, CCW-positive) from "up" to the north vector.
-        # In image space (y-down): "up" = -dy direction, so we negate dy before atan2.
-        # Examples: north at top (dy<0,dx≈0) → 0°; north at right (dx>0,dy≈0) → 90° CCW ✓
+        dy = y_n - cy   # positive = below centroid (south)
+        dx = x_n - cx   # positive = right of centroid (east)
         angle_degrees = math.degrees(math.atan2(dx, -dy))
         rads = math.radians(angle_degrees)
 
-        #rotate image to place north up, relocate East and determine if horizontal flip is needed
-        rotated_img = ndimage.rotate(mask_arr, angle=angle_degrees, reshape=True)
-        rot_east = self.get_cardinal_points(rotated_img,name,grey_value_df,'east')
+        # Determine if a horizontal flip is needed by rotating the east marker around the centroid.
+        y_e, x_e = points['east']
+        cos_t = math.cos(rads)
+        sin_t = math.sin(rads)
+        x0 = x_e - cx
+        y0 = y_e - cy
+        x_rot = (cos_t * x0) - (sin_t * y0) + cx
 
-        mid_point_x = rotated_img.shape[1]//2
-        _ , east_x= rot_east['east']
+        if abs(x_rot - cx) < 1.0:
+            print('East is on the midline after rotation, check image')
+            raise ValueError("ORIENTATION_MISMATCH")
 
-        if east_x > mid_point_x:
-            flip = 'horizontal'
-        elif east_x < mid_point_x:
-            flip = None
-        else:
-            print('East is on the midline, check image')
-            flip = None
-            raise ValueError(f"ORIENTATION_MISMATCH")
+        flip = 'horizontal' if x_rot > cx else None
         print(f'Detected Flip: {flip}')
         print(f'Detected Rotation: {angle_degrees:.2f} degrees ({rads:.4f} radians)')
         return flip, rads, angle_degrees
@@ -409,11 +420,11 @@ class Registration:
           3. Translate moving centroid to fixed centroid
 
         Backward (fixed→moving) composite undoes these in reverse order.
-        SimpleITK CompositeTransform applies transforms first-added → first-applied,
-        so the add order must be the reverse of the undo order:
-          add 1st (applied 1st): centroid alignment (un-translate)
-          add 2nd (applied 2nd): horizontal flip    (un-flip, self-inverse)
-          add 3rd (applied 3rd): rotation by -rads  (un-rotate)
+        SimpleITK CompositeTransform applies transforms last-added → first-applied,
+        so we add transforms in reverse application order:
+          add 1st (applied last): rotation by -rads  (un-rotate)
+          add 2nd (applied 2nd):  horizontal flip    (un-flip, self-inverse)
+          add 3rd (applied 1st):  centroid alignment (un-translate)
 
         All rotation and flip transforms are centred on the physical centroid of the
         moving mask (not the image centre) so that the centroid stays fixed under
@@ -426,26 +437,23 @@ class Registration:
         # for both rotation and flip so that those transforms leave the centroid fixed.
         moving_centroid = self.get_mask_centroid(sitk_moving)
 
-        # 1. Centroid alignment: translate fixed centroid → moving centroid.
-        centroid_transform = self.get_centroid_alignment_transform(sitk_moving, sitk_fixed)
-        composite_transform.AddTransform(centroid_transform)
-
-        # 2. Un-flip (added before un-rotate because forward order was rotate → flip,
-        #    so backward order is un-flip → un-rotate).
-        if flip is not None:
-            print(f"  Applying flip: {flip}")
-            flip_transform = sitk.AffineTransform(sitk_moving.GetDimension())
-            flip_transform.SetCenter(moving_centroid)
-            flip_transform.SetMatrix([-1, 0, 0, 1])   # horizontal flip: x → -(x-cx)+cx
-            composite_transform.AddTransform(flip_transform)
-
-        # 3. Un-rotate: backward rotation is -rads (forward CCW → backward CW).
         if rads is not None:
             print(f"  Applying rotation: {angle_degrees:.2f} degrees")
             rotation_transform = sitk.Euler2DTransform()
             rotation_transform.SetCenter(moving_centroid)
             rotation_transform.SetAngle(-rads)
             composite_transform.AddTransform(rotation_transform)
+
+        if flip is not None:
+            print(f"  Applying flip: {flip}")
+            flip_transform = sitk.AffineTransform(sitk_moving.GetDimension())
+            flip_transform.SetCenter(moving_centroid)
+            flip_transform.SetMatrix([-1, 0,  0,  1])   # horizontal flip: x → -(x-cx)+cx
+            composite_transform.AddTransform(flip_transform)
+
+        # Centroid alignment: translate fixed centroid → moving centroid.
+        centroid_transform = self.get_centroid_alignment_transform(sitk_moving, sitk_fixed)
+        composite_transform.AddTransform(centroid_transform)
 
         if flip is None and rads is None:
             print("  No flip or rotation applied.")
@@ -475,11 +483,10 @@ class Registration:
 
         moving_dist = self.to_distance_map(sitk_moving)
         fixed_dist = self.to_distance_map(sitk_fixed)
-        fixed_center = sitk_fixed.TransformContinuousIndexToPhysicalPoint(
-            [(sz - 1) / 2.0 for sz in sitk_fixed.GetSize()]
-        )
-        fine_transform = sitk.AffineTransform(2)  # 4 DOF: angle, scale, tx, ty
-        fine_transform.SetCenter(fixed_center)
+
+        # Keep the north-up / east-left orientation fixed during optimization by
+        # only refining translation (no additional rotation/scale/shear/reflection).
+        fine_transform = sitk.TranslationTransform(2)
 
         fixed_mask_sitk = sitk.BinaryThreshold(sitk_fixed, lowerThreshold=0.5,
                                             upperThreshold=255.0, insideValue=1, outsideValue=0)

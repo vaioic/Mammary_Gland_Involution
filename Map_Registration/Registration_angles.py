@@ -230,6 +230,7 @@ class Registration:
         img_bbox = tissue_arr[minc.bbox[0]-10:maxc.bbox[2]+10,minr.bbox[1]-10:maxr.bbox[3]+10]
         cropped_mask = (img_bbox==largest_obj_label)*img_bbox
         cropped_mask = ndimage.binary_fill_holes(cropped_mask)
+        cropped_mask = sk.img_as_ubyte(cropped_mask)
         save_path_img = os.path.join(data_path,tissue_id,'cropped_image')
         save_path_mask = os.path.join(data_path,tissue_id,'cropped_mask')
         os.makedirs(save_path_img,exist_ok=True)

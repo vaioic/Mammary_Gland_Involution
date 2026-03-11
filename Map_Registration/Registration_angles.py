@@ -37,9 +37,9 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                         tissue_path = os.path.join(data_path, row['Tissue.ID'], row['Image'] + '.svs.png')
                         tissue_arr = reg.open_img(tissue_path)
                         img_bbox, cropped_mask = reg.get_tissue_bbox(tissue_arr, row['Image'], row['Tissue.ID'], data_path)
-                        pad_img, pad_mask_bbox = reg.add_padding(img_bbox, cropped_mask, row['Image'], row['Tissue.ID'], data_path)
+                        pad_img_bbox, pad_mask_bbox = reg.add_padding(img_bbox, cropped_mask, row['Image'], row['Tissue.ID'], data_path)
                         try:
-                            points = reg.get_cardinal_points(img_bbox, name, grey_value_df,'north')
+                            points = reg.get_cardinal_points(pad_img_bbox, name, grey_value_df,'north')
                         except ValueError as e:
                             print(f"  Cardinal Point Detection failure logged for {name}")
                             cardinal_point_failures.append({
@@ -49,7 +49,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                             continue
 
                         try:                                      # orientation try
-                            flip, rotation = reg.orient_tissue(points,name,grey_value_df,pad_img)
+                            flip, angle_radians, angle_degrees = reg.orient_tissue(points,name,grey_value_df,pad_img_bbox)
                         except ValueError as e:
                             if "ORIENTATION_MISMATCH" in str(e):
                                 print(f"  Orientation failure logged for {name}")
@@ -72,7 +72,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                             continue
 
                         sitk_fixed, sitk_moving = reg.load_sitk_imgs(map_region, pad_mask_bbox, spacing)
-                        composite_transform = reg.apply_flip_rotation(sitk_moving, sitk_fixed, flip, rotation)
+                        composite_transform = reg.apply_flip_rotation(sitk_moving, sitk_fixed, flip, angle_radians, angle_degrees)
                         transform = reg.refine_registration(sitk_moving, sitk_fixed, composite_transform,
                                                             data_path, row['Tissue.ID'], row['Image'])
                         tile_coordinates = tile_centroid_df_gland[
@@ -398,19 +398,18 @@ class Registration:
         translation.SetOffset(offset)
         return translation
 
-    def apply_flip_rotation(self, sitk_moving, sitk_fixed, flip=None, rotation=None):
+    def apply_flip_rotation(self, sitk_moving, sitk_fixed, flip=None, rads=None, rotation=None):
         FLIP_MATRICES = {
             "none":       [ 1,  0,  0,  1],
             "horizontal": [-1,  0,  0,  1],
         }
         composite_transform = sitk.CompositeTransform(2)
          # --- Rotation ---
-        if rotation is not None:
-            print(f"  Applying rotation: {rotation}")
+        if rads is not None:
+            print(f"  Applying rotation(angle): {rotation}")
             moving_center = sitk_moving.TransformContinuousIndexToPhysicalPoint(
                 [(sz - 1) / 2.0 for sz in sitk_moving.GetSize()]
             )
-            rads = rotation
             rotation_transform = sitk.Euler2DTransform()
             rotation_transform.SetCenter(moving_center)
             rotation_transform.SetAngle(rads)

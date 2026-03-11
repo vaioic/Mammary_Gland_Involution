@@ -326,23 +326,22 @@ class Registration:
         # Compare pixel coords directly for orientation — spacing does not
         # affect which direction is "up" or "right"
 
-        #calculate angle between relative north and cardinal north coordinate:
-        north_relative = (0, mask_arr.shape[1]//2) #relative north
-        north_cardinal = points['north']
+        # Compute CCW rotation angle needed to bring the north cardinal point to the top of the image.
+        # detect_cardinal_point returns (row, col) = (y, x) in image space (y increases downward).
+        h, w = mask_arr.shape
+        cy, cx = h / 2.0, w / 2.0
+        y_n, x_n = points['north']
+        dy = y_n - cy   # positive = below center (south)
+        dx = x_n - cx   # positive = right of center (east)
 
-        y1, x1 = north_relative
-        x2, y2 = north_cardinal
-    
-        dx = x2 - x1
-        dy = y2 - y1
+        # atan2(dx, -dy): angle (degrees, CCW-positive) from "up" to the north vector.
+        # In image space (y-down): "up" = -dy direction, so we negate dy before atan2.
+        # Examples: north at top (dy<0,dx≈0) → 0°; north at right (dx>0,dy≈0) → 90° CCW ✓
+        angle_degrees = math.degrees(math.atan2(dx, -dy))
+        rads = math.radians(angle_degrees)
 
-        angle_radians = math.atan2(dy, dx)
-        angle_degrees = math.degrees(angle_radians)
-        rads = np.deg2rad(angle_degrees)
-        
         #rotate image to place north up, relocate East and determine if horizontal flip is needed
-        #rotated_img = sk.transform.rotate(mask_arr,angle=angle_degrees,preserve_range=True,mode='constant')
-        rotated_img = ndimage.rotate(mask_arr,angle=angle_degrees,reshape=True)
+        rotated_img = ndimage.rotate(mask_arr, angle=angle_degrees, reshape=True)
         rot_east = self.get_cardinal_points(rotated_img,name,grey_value_df,'east')
 
         mid_point_x = rotated_img.shape[1]//2
@@ -357,7 +356,7 @@ class Registration:
             flip = None
             raise ValueError(f"ORIENTATION_MISMATCH")
         print(f'Detected Flip: {flip}')
-        print(f'Detected Rotation(radians): {angle_radians}')
+        print(f'Detected Rotation: {angle_degrees:.2f} degrees ({rads:.4f} radians)')
         return flip, rads, angle_degrees
 
     def load_sitk_imgs(self,map_region,pad_mask_bbox,spacing):
@@ -387,53 +386,61 @@ class Registration:
 
     def get_centroid_alignment_transform(self, sitk_moving, sitk_fixed):
         """
-        Build a translation transform that maps the moving mask centroid
-        to the fixed mask centroid, replacing CenteredTransformInitializer.
+        Build a translation transform that maps the fixed mask centroid to the
+        moving mask centroid.  SimpleITK resampling uses the transform in the
+        fixed→moving direction: T(p) = p + offset, so T(fixed_centroid) =
+        moving_centroid requires offset = moving_centroid - fixed_centroid.
         """
         fixed_centroid  = self.get_mask_centroid(sitk_fixed)
         moving_centroid = self.get_mask_centroid(sitk_moving)
 
         translation = sitk.TranslationTransform(sitk_moving.GetDimension())
-        # SimpleITK transforms map fixed→moving, so the offset is inverted
         offset = [m - f for f, m in zip(fixed_centroid, moving_centroid)]
         translation.SetOffset(offset)
         return translation
 
-    def apply_flip_rotation(self, sitk_moving, sitk_fixed, flip=None, rads=None, rotation=None):
-        FLIP_MATRICES = {
-            "none":       [ 1,  0,  0,  1],
-            "horizontal": [-1,  0,  0,  1],
-        }
+    def apply_flip_rotation(self, sitk_moving, sitk_fixed, flip=None, rads=None, angle_degrees=None):
+        """
+        Build a composite pre-alignment transform (fixed→moving, backward convention).
+
+        Transform order (first-added = first-applied to p_fixed):
+          1. centroid alignment  — moves p_fixed into the moving image's neighborhood
+          2. rotation            — undoes the forward CCW orientation rotation (uses -rads)
+          3. flip                — undoes the forward horizontal flip (flip is self-inverse)
+
+        The rotation and flip are centred on the physical centre of the moving image, which
+        is valid because add_padding centres the tissue in a square canvas.
+        """
         composite_transform = sitk.CompositeTransform(2)
 
+        # 1. Centroid alignment: translate fixed centroid to moving centroid.
         centroid_transform = self.get_centroid_alignment_transform(sitk_moving, sitk_fixed)
         composite_transform.AddTransform(centroid_transform)
 
-        # --- Rotation ---
+        moving_center = sitk_moving.TransformContinuousIndexToPhysicalPoint(
+            [(sz - 1) / 2.0 for sz in sitk_moving.GetSize()]
+        )
+
+        # 2. Rotation (backward): the forward orientation rotates the moving image CCW by
+        #    angle_degrees.  In the fixed→moving (backward) direction we must apply -rads
+        #    so that we look up the correct pixel in the original, un-rotated moving image.
         if rads is not None:
-            print(f"  Applying rotation(angle): {rotation}")
-            moving_center = sitk_moving.TransformContinuousIndexToPhysicalPoint(
-                [(sz - 1) / 2.0 for sz in sitk_moving.GetSize()]
-            )
+            print(f"  Applying rotation: {angle_degrees:.2f} degrees")
             rotation_transform = sitk.Euler2DTransform()
             rotation_transform.SetCenter(moving_center)
-            rotation_transform.SetAngle(rads)
+            rotation_transform.SetAngle(-rads)
             composite_transform.AddTransform(rotation_transform)
-        
-        # --- Flip ---
+
+        # 3. Flip (backward): horizontal flip is self-inverse, so the same matrix undoes it.
         if flip is not None:
             print(f"  Applying flip: {flip}")
-            moving_center = sitk_moving.TransformContinuousIndexToPhysicalPoint(
-                [(sz - 1) / 2.0 for sz in sitk_moving.GetSize()]
-            )
             flip_transform = sitk.AffineTransform(sitk_moving.GetDimension())
             flip_transform.SetCenter(moving_center)
-            flip_transform.SetMatrix(FLIP_MATRICES[flip])
+            flip_transform.SetMatrix([-1, 0, 0, 1])   # horizontal flip: x → -x about centre
             composite_transform.AddTransform(flip_transform)
-        
-            
+
         if flip is None and rads is None:
-            print(" No flip or rotation applied.")    
+            print("  No flip or rotation applied.")
 
         return composite_transform
     
@@ -464,7 +471,7 @@ class Registration:
             [(sz - 1) / 2.0 for sz in sitk_fixed.GetSize()]
         )
         fine_transform = sitk.AffineTransform(2)  # 4 DOF: angle, scale, tx, ty
-        #fine_transform.SetCenter(fixed_center)
+        fine_transform.SetCenter(fixed_center)
 
         fixed_mask_sitk = sitk.BinaryThreshold(sitk_fixed, lowerThreshold=0.5,
                                             upperThreshold=255.0, insideValue=1, outsideValue=0)

@@ -338,6 +338,7 @@ class Registration:
 
         angle_radians = math.atan2(dy, dx)
         angle_degrees = math.degrees(angle_radians)
+        rads = np.deg2rad(angle_degrees)
         
         #rotate image to place north up, relocate East and determine if horizontal flip is needed
         #rotated_img = sk.transform.rotate(mask_arr,angle=angle_degrees,preserve_range=True,mode='constant')
@@ -357,7 +358,7 @@ class Registration:
             raise ValueError(f"ORIENTATION_MISMATCH")
         print(f'Detected Flip: {flip}')
         print(f'Detected Rotation(radians): {angle_radians}')
-        return flip, angle_radians, angle_degrees
+        return flip, rads, angle_degrees
 
     def load_sitk_imgs(self,map_region,pad_mask_bbox,spacing):
         """ Convert array to 32bit float and then to sitk image for registration """
@@ -404,16 +405,10 @@ class Registration:
             "horizontal": [-1,  0,  0,  1],
         }
         composite_transform = sitk.CompositeTransform(2)
-        # --- Flip ---
-        if flip is not None:
-            print(f"  Applying flip: {flip}")
-            moving_center = sitk_moving.TransformContinuousIndexToPhysicalPoint(
-                [(sz - 1) / 2.0 for sz in sitk_moving.GetSize()]
-            )
-            flip_transform = sitk.AffineTransform(sitk_moving.GetDimension())
-            flip_transform.SetCenter(moving_center)
-            flip_transform.SetMatrix(FLIP_MATRICES[flip])
-            composite_transform.AddTransform(flip_transform)
+
+        centroid_transform = self.get_centroid_alignment_transform(sitk_moving, sitk_fixed)
+        composite_transform.AddTransform(centroid_transform)
+
         # --- Rotation ---
         if rads is not None:
             print(f"  Applying rotation(angle): {rotation}")
@@ -424,13 +419,21 @@ class Registration:
             rotation_transform.SetCenter(moving_center)
             rotation_transform.SetAngle(rads)
             composite_transform.AddTransform(rotation_transform)
+        
+        # --- Flip ---
+        if flip is not None:
+            print(f"  Applying flip: {flip}")
+            moving_center = sitk_moving.TransformContinuousIndexToPhysicalPoint(
+                [(sz - 1) / 2.0 for sz in sitk_moving.GetSize()]
+            )
+            flip_transform = sitk.AffineTransform(sitk_moving.GetDimension())
+            flip_transform.SetCenter(moving_center)
+            flip_transform.SetMatrix(FLIP_MATRICES[flip])
+            composite_transform.AddTransform(flip_transform)
+        
             
         if flip is None and rads is None:
-            print(" No flip or rotation applied.")
-
-        # --- Centroid alignment: moving mask → fixed mask (KEY FIX) ---
-        centroid_transform = self.get_centroid_alignment_transform(sitk_moving, sitk_fixed)
-        composite_transform.AddTransform(centroid_transform)
+            print(" No flip or rotation applied.")    
 
         return composite_transform
     
@@ -460,8 +463,8 @@ class Registration:
         fixed_center = sitk_fixed.TransformContinuousIndexToPhysicalPoint(
             [(sz - 1) / 2.0 for sz in sitk_fixed.GetSize()]
         )
-        fine_transform = sitk.Similarity2DTransform()  # 4 DOF: angle, scale, tx, ty
-        fine_transform.SetCenter(fixed_center)
+        #fine_transform = sitk.Similarity2DTransform()  # 4 DOF: angle, scale, tx, ty
+        #fine_transform.SetCenter(fixed_center)
 
         fixed_mask_sitk = sitk.BinaryThreshold(sitk_fixed, lowerThreshold=0.5,
                                             upperThreshold=255.0, insideValue=1, outsideValue=0)
@@ -471,8 +474,8 @@ class Registration:
         registration_method.SetMetricSamplingPercentage(0.2)
         registration_method.SetMetricAsJointHistogramMutualInformation()
         registration_method.MetricUseFixedImageGradientFilterOff()
-        registration_method.SetMovingInitialTransform(composite_transform)
-        registration_method.SetInitialTransform(fine_transform, inPlace=True)
+        #registration_method.SetMovingInitialTransform()
+        registration_method.SetInitialTransform(composite_transform, inPlace=True)
         registration_method.SetOptimizerAsGradientDescent(
             learningRate=1.0,
             numberOfIterations=500,

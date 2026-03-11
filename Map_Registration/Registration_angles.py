@@ -525,7 +525,21 @@ class Registration:
         ax.invert_yaxis()
         fig.savefig(save_plot, dpi=600)
         plt.close(fig)
-            
+
+    
+        def plot_registered_tissue(padded_img,map_region,transform,name,path_to_tissue_masks):
+            resampled = sitk.Resample(
+                    moving_sitk, fixed_sitk, optimized_transform,
+                    sitk.sitkNearestNeighbor, 0.0, moving_sitk.GetPixelID()
+                )
+            fig, axes = plt.subplots()
+            fixed   = sitk.GetArrayFromImage(fixed_sitk)
+            moved   = sitk.GetArrayFromImage(resampled)
+            axes.imshow(fixed, cmap="gray")
+            axes.imshow(moved,cmap="Reds",alpha=0.5)
+            plt.tight_layout()
+            plt.savefig("registration_verification_fullmap.png", dpi=150)
+            plt.close()
 
     def run(self):
         data_path, map_path, filtered_tile_df, filtered_anno_df, grey_value_df = self.set_up_pipeline(self.path_to_tissue_masks,

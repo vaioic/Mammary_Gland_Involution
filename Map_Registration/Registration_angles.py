@@ -49,7 +49,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                             continue
 
                         try:                                      # orientation try
-                            flip, rotation = reg.orient_tissue(points,name,img_bbox,grey_value_df)
+                            flip, rotation = reg.orient_tissue(points,name,grey_value_df,img_bbox)
                         except ValueError as e:
                             if "ORIENTATION_MISMATCH" in str(e):
                                 print(f"  Orientation failure logged for {name}")
@@ -348,7 +348,6 @@ class Registration:
         mid_point_y = rotated_img.shape[0]//2
         _, east_y = rot_east['east']
 
-
         if east_y > mid_point_y:
             flip = 'horizontal'
             rotation = angle_radians
@@ -432,10 +431,8 @@ class Registration:
             flip_transform.SetMatrix(FLIP_MATRICES[flip])
             composite_transform.AddTransform(flip_transform)
 
-       
-
         if flip is None and rotation is None:
-            print("  No flip or rotation applied.")
+            print(" No flip or rotation applied.")
 
         # --- Centroid alignment: moving mask → fixed mask (KEY FIX) ---
         centroid_transform = self.get_centroid_alignment_transform(sitk_moving, sitk_fixed)

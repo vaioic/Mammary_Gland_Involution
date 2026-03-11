@@ -214,13 +214,12 @@ class Registration:
         arr = np.array(Image.open(img_path).convert('L'))
         return arr
 
-    def get_tissue_bbox(
-            self,
-            tissue_arr,
-            name,
-            tissue_id,
-            data_path
-    ):
+    def get_tissue_bbox(self,
+        tissue_arr,
+        name,
+        tissue_id,
+        data_path
+        ):
         props = sk.measure.regionprops(tissue_arr)
         largest_obj = max(props, key=lambda p: p.area)
         largest_obj_label = largest_obj.label
@@ -254,7 +253,7 @@ class Registration:
         max_dim = max(img_bbox.shape)
         padding_y = (max_dim - img_bbox.shape[0]) // 2
         padding_x = (max_dim - img_bbox.shape[1]) // 2
-        pad_img_bbox = np.pad(img_bbox,((padding_y+50,padding_y+50),(padding_x+50,padding_x+50)),mode='constant',constant_values=255)
+        pad_img_bbox = np.pad(img_bbox,((padding_y+50,padding_y+50),(padding_x+50,padding_x+50)),mode='constant',constant_values=0)
         pad_mask_bbox = np.pad(cropped_mask,((padding_y+50,padding_y+50),(padding_x+50,padding_x+50)),mode='constant',constant_values=0)
         save_path_img = os.path.join(data_path,tissue_id,'padded_cropped_image')
         save_path_mask = os.path.join(data_path,tissue_id,'padded_cropped_mask')

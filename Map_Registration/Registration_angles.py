@@ -404,17 +404,6 @@ class Registration:
             "horizontal": [-1,  0,  0,  1],
         }
         composite_transform = sitk.CompositeTransform(2)
-         # --- Rotation ---
-        if rads is not None:
-            print(f"  Applying rotation(angle): {rotation}")
-            moving_center = sitk_moving.TransformContinuousIndexToPhysicalPoint(
-                [(sz - 1) / 2.0 for sz in sitk_moving.GetSize()]
-            )
-            rotation_transform = sitk.Euler2DTransform()
-            rotation_transform.SetCenter(moving_center)
-            rotation_transform.SetAngle(rads)
-            composite_transform.AddTransform(rotation_transform)
-
         # --- Flip ---
         if flip is not None:
             print(f"  Applying flip: {flip}")
@@ -425,7 +414,17 @@ class Registration:
             flip_transform.SetCenter(moving_center)
             flip_transform.SetMatrix(FLIP_MATRICES[flip])
             composite_transform.AddTransform(flip_transform)
-
+        # --- Rotation ---
+        if rads is not None:
+            print(f"  Applying rotation(angle): {rotation}")
+            moving_center = sitk_moving.TransformContinuousIndexToPhysicalPoint(
+                [(sz - 1) / 2.0 for sz in sitk_moving.GetSize()]
+            )
+            rotation_transform = sitk.Euler2DTransform()
+            rotation_transform.SetCenter(moving_center)
+            rotation_transform.SetAngle(rads)
+            composite_transform.AddTransform(rotation_transform)
+            
         if flip is None and rotation is None:
             print(" No flip or rotation applied.")
 

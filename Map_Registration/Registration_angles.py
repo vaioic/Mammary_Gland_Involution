@@ -3,7 +3,7 @@ import SimpleITK as sitk
 from typing import Tuple
 import skimage as sk
 from PIL import Image
-import scipy as sc
+from scipy import ndimage
 import pandas as pd
 import os
 import argparse
@@ -37,7 +37,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                         tissue_path = os.path.join(data_path, row['Tissue.ID'], row['Image'] + '.svs.png')
                         tissue_arr = reg.open_img(tissue_path)
                         img_bbox, cropped_mask = reg.get_tissue_bbox(tissue_arr, row['Image'], row['Tissue.ID'], data_path)
-                        _, pad_mask_bbox = reg.add_padding(img_bbox, cropped_mask, row['Image'], row['Tissue.ID'], data_path)
+                        pad_img, pad_mask_bbox = reg.add_padding(img_bbox, cropped_mask, row['Image'], row['Tissue.ID'], data_path)
                         try:
                             points = reg.get_cardinal_points(img_bbox, name, grey_value_df,'north')
                         except ValueError as e:
@@ -49,7 +49,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                             continue
 
                         try:                                      # orientation try
-                            flip, rotation = reg.orient_tissue(points,name,grey_value_df,img_bbox)
+                            flip, rotation = reg.orient_tissue(points,name,grey_value_df,pad_img)
                         except ValueError as e:
                             if "ORIENTATION_MISMATCH" in str(e):
                                 print(f"  Orientation failure logged for {name}")
@@ -199,7 +199,7 @@ class Registration:
             data_path
     ):
         mask = tissue_arr < 255
-        mask = sc.ndimage.binary_fill_holes(mask)
+        mask = ndimage.binary_fill_holes(mask)
         labels = sk.measure.label(mask)
         props = sk.measure.regionprops(labels)
         largest_obj = max(props, key=lambda p: p.area)
@@ -251,7 +251,7 @@ class Registration:
             grey_value_df):
         grey_value = grey_value_df.loc[grey_value_df['Mapping_ID'] == map_id, 'Map_Grey_value'].values[0] 
         map_region = (map_arr == grey_value).astype(np.float32)
-        map_region = sc.ndimage.binary_fill_holes(map_region)
+        map_region = ndimage.binary_fill_holes(map_region)
         if not map_region.any():
             raise ValueError(f"Map region for ID '{map_id}' (grey value {grey_value}) is empty check map image and grey value key.")
         return map_region
@@ -338,11 +338,10 @@ class Registration:
 
         angle_radians = math.atan2(dy, dx)
         angle_degrees = math.degrees(angle_radians)
-        if angle_degrees < 0:
-            angle_degrees+=360
         
         #rotate image to place north up, relocate East and determine if horizontal flip is needed
-        rotated_img = sk.transform.rotate(mask_arr,angle=angle_degrees,preserve_range=True,mode='constant')
+        #rotated_img = sk.transform.rotate(mask_arr,angle=angle_degrees,preserve_range=True,mode='constant')
+        rotated_img = ndimage.rotate(mask_arr,angle=angle_degrees,reshape=True)
         rot_east = self.get_cardinal_points(rotated_img,name,grey_value_df,'east')
 
         mid_point_y = rotated_img.shape[0]//2
@@ -350,18 +349,15 @@ class Registration:
 
         if east_y > mid_point_y:
             flip = 'horizontal'
-            rotation = angle_radians
         elif east_y < mid_point_y:
             flip = None
-            rotation = angle_radians
         else:
             print('East is on the midline, check image')
             flip = None
-            rotation = angle_radians
             raise ValueError(f"ORIENTATION_MISMATCH")
         print(f'Detected Flip: {flip}')
-        print(f'Detected Rotation(radians): {rotation}')
-        return flip, rotation
+        print(f'Detected Rotation(radians): {angle_radians}')
+        return flip, angle_radians, angle_degrees
 
     def load_sitk_imgs(self,map_region,pad_mask_bbox,spacing):
         """ Convert array to 32bit float and then to sitk image for registration """

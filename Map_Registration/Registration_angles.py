@@ -85,7 +85,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                         raise RuntimeError(f"Failed processing image {name}: {e}")
                 if saved_dfs:
                     reg.plot_transformed_points(saved_dfs,animal_id,gland,data_path)
-                reg.write_qc_logs(map_region_failures, orientation_failures, cardinal_point_failures, data_path, animal_id, gland)
+                    reg.write_qc_logs(map_region_failures, orientation_failures, cardinal_point_failures, data_path, animal_id, gland)
             except Exception as e:
                 print(f"Failed processing gland {gland} for animal {animal_id}: {e}")
                 continue

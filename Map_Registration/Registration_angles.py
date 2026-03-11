@@ -328,9 +328,9 @@ class Registration:
 
         #calculate angle between relative north and cardinal north coordinate:
         north_relative = (0, mask_arr.shape[1]//2) #relative north
-        north_cardinal = points['north'][0]
+        north_cardinal = points['north']
 
-        x1, y1 = north_relative
+        y1, x1 = north_relative
         x2, y2 = north_cardinal
     
         dx = x2 - x1
@@ -346,7 +346,7 @@ class Registration:
         rot_east = self.get_cardinal_points(rotated_img,name,grey_value_df,'east')
 
         mid_point_y = rotated_img.shape[0]//2
-        east_y = rot_east['east'][0]
+        _, east_y = rot_east['east']
 
 
         if east_y > mid_point_y:

@@ -463,7 +463,7 @@ class Registration:
         fixed_center = sitk_fixed.TransformContinuousIndexToPhysicalPoint(
             [(sz - 1) / 2.0 for sz in sitk_fixed.GetSize()]
         )
-        #fine_transform = sitk.Similarity2DTransform()  # 4 DOF: angle, scale, tx, ty
+        fine_transform = sitk.AffineTransform(2)  # 4 DOF: angle, scale, tx, ty
         #fine_transform.SetCenter(fixed_center)
 
         fixed_mask_sitk = sitk.BinaryThreshold(sitk_fixed, lowerThreshold=0.5,
@@ -474,8 +474,8 @@ class Registration:
         registration_method.SetMetricSamplingPercentage(0.2)
         registration_method.SetMetricAsJointHistogramMutualInformation()
         registration_method.MetricUseFixedImageGradientFilterOff()
-        #registration_method.SetMovingInitialTransform()
-        registration_method.SetInitialTransform(composite_transform, inPlace=True)
+        registration_method.SetMovingInitialTransform(composite_transform)
+        registration_method.SetInitialTransform(fine_transform, inPlace=True)
         registration_method.SetOptimizerAsGradientDescent(
             learningRate=1.0,
             numberOfIterations=500,

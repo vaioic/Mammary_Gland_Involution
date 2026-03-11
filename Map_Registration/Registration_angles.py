@@ -491,7 +491,10 @@ class Registration:
                             sitk_fixed,
                             composite_transform,
                             data_path,
-                            tissue_id,name):
+                            tissue_id,
+                            name,
+                            max_rotation_degrees: float = 0.0,
+                            rotation_step_degrees: float = 2.0):
         save_path_hdf = os.path.join(data_path,tissue_id,'transformation_files','hdf')
         save_file_hdf = os.path.join(save_path_hdf,f"TF_hdf_{name}_{tissue_id}.hdf")
         os.makedirs(save_path_hdf,exist_ok=True)
@@ -499,38 +502,96 @@ class Registration:
         moving_dist = self.to_distance_map(sitk_moving)
         fixed_dist = self.to_distance_map(sitk_fixed)
 
-        # Keep the north-up / east-left orientation fixed during optimization by
-        # only refining translation (no additional rotation/scale/shear/reflection).
-        fine_transform = sitk.TranslationTransform(2)
-
-        fixed_mask_sitk = sitk.BinaryThreshold(sitk_fixed, lowerThreshold=0.5,
-                                            upperThreshold=255.0, insideValue=1, outsideValue=0)
-        registration_method = sitk.ImageRegistrationMethod()
-        registration_method.SetMetricFixedMask(fixed_mask_sitk)
-        registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
-        registration_method.SetMetricSamplingPercentage(0.2)
-        registration_method.SetMetricAsJointHistogramMutualInformation()
-        registration_method.MetricUseFixedImageGradientFilterOff()
-        registration_method.SetMovingInitialTransform(composite_transform)
-        registration_method.SetInitialTransform(fine_transform, inPlace=True)
-        registration_method.SetOptimizerAsGradientDescent(
-            learningRate=1.0,
-            numberOfIterations=500,
-            convergenceMinimumValue=1e-6,
-            convergenceWindowSize=20
-            #estimateLearningRate = registration_method.EachIteration
+        fixed_mask_sitk = sitk.BinaryThreshold(
+            sitk_fixed,
+            lowerThreshold=0.5,
+            upperThreshold=255.0,
+            insideValue=1,
+            outsideValue=0
         )
-        registration_method.SetOptimizerScalesFromPhysicalShift()
-        registration_method.SetShrinkFactorsPerLevel(shrinkFactors=[2, 1])
-        registration_method.SetSmoothingSigmasPerLevel(smoothingSigmas=[1, 0])
-        registration_method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
-        registration_method.SetInterpolator(sitk.sitkLinear)
+
+        def _run_translation_refine(
+                moving_initial_transform,
+                iterations: int,
+                learning_rate: float = 1.0
+        ) -> tuple[float, sitk.Transform]:
+            # Keep the north-up / east-left orientation fixed during optimization by
+            # only refining translation (no additional rotation/scale/shear/reflection).
+            fine = sitk.TranslationTransform(2)
+            method = sitk.ImageRegistrationMethod()
+            method.SetMetricFixedMask(fixed_mask_sitk)
+            method.SetMetricSamplingStrategy(method.RANDOM)
+            method.SetMetricSamplingPercentage(0.2)
+            method.SetMetricAsJointHistogramMutualInformation()
+            method.MetricUseFixedImageGradientFilterOff()
+            method.SetMovingInitialTransform(moving_initial_transform)
+            method.SetInitialTransform(fine, inPlace=True)
+            method.SetOptimizerAsGradientDescent(
+                learningRate=learning_rate,
+                numberOfIterations=int(iterations),
+                convergenceMinimumValue=1e-6,
+                convergenceWindowSize=20
+            )
+            method.SetOptimizerScalesFromPhysicalShift()
+            method.SetShrinkFactorsPerLevel(shrinkFactors=[2, 1])
+            method.SetSmoothingSigmasPerLevel(smoothingSigmas=[1, 0])
+            method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
+            method.SetInterpolator(sitk.sitkLinear)
+            method.Execute(fixed_dist, moving_dist)
+            return float(method.GetMetricValue()), fine
+
+        # Optional bounded rotation refinement: search over a limited range of extra
+        # rotation (+/- max_rotation_degrees) and keep the best MI score after a short
+        # translation-only refinement. This enforces a hard cap on rotation drift.
+        chosen_initial = composite_transform
+        chosen_delta_deg = 0.0
+        if max_rotation_degrees and max_rotation_degrees > 0:
+            step = float(rotation_step_degrees) if rotation_step_degrees and rotation_step_degrees > 0 else 2.0
+            max_deg = float(max_rotation_degrees)
+            # Coarse-to-fine search.
+            coarse_angles = np.arange(-max_deg, max_deg + (step * 0.5), step, dtype=float)
+            moving_centroid = self.get_mask_centroid(sitk_moving)
+
+            def _with_delta_rotation(delta_deg: float):
+                delta = sitk.Euler2DTransform()
+                delta.SetCenter(moving_centroid)
+                delta.SetAngle(math.radians(float(delta_deg)))
+                # Applied after the provided composite_transform (rotate in moving-space about centroid).
+                out = sitk.CompositeTransform(2)
+                out.AddTransform(delta)               # applied last
+                out.AddTransform(composite_transform) # applied first
+                return out
+
+            best_metric = None
+            best_deg = 0.0
+            for deg in coarse_angles:
+                candidate_initial = _with_delta_rotation(deg)
+                metric, _ = _run_translation_refine(candidate_initial, iterations=80, learning_rate=1.0)
+                if best_metric is None or metric < best_metric:
+                    best_metric = metric
+                    best_deg = float(deg)
+
+            fine_step = max(step / 4.0, 0.25)
+            fine_angles = np.arange(best_deg - step, best_deg + step + (fine_step * 0.5), fine_step, dtype=float)
+            for deg in fine_angles:
+                if abs(deg) > max_deg + 1e-6:
+                    continue
+                candidate_initial = _with_delta_rotation(deg)
+                metric, _ = _run_translation_refine(candidate_initial, iterations=120, learning_rate=0.5)
+                if metric < best_metric:
+                    best_metric = metric
+                    best_deg = float(deg)
+
+            chosen_delta_deg = best_deg
+            chosen_initial = _with_delta_rotation(best_deg)
+            print(f"  Rotation search: chose dtheta={chosen_delta_deg:.2f} deg within +/-{max_deg:.2f} deg")
+
         print(f"  Registering...")
-        registration_method.Execute(fixed_dist, moving_dist)
-        metric = registration_method.GetMetricValue()
+        metric, fine_transform = _run_translation_refine(chosen_initial, iterations=500, learning_rate=1.0)
         print(f"metric: {metric:.6f}")
+
         full_composite = sitk.CompositeTransform(2)
-        full_composite.AddTransform(composite_transform)
+        full_composite.AddTransform(chosen_initial)
         full_composite.AddTransform(fine_transform)
 
         #save transform as mat and csv

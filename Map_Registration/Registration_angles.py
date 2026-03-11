@@ -344,12 +344,12 @@ class Registration:
         rotated_img = ndimage.rotate(mask_arr,angle=angle_degrees,reshape=True)
         rot_east = self.get_cardinal_points(rotated_img,name,grey_value_df,'east')
 
-        mid_point_y = rotated_img.shape[0]//2
-        _, east_y = rot_east['east']
+        mid_point_x = rotated_img.shape[1]//2
+        _ , east_x= rot_east['east']
 
-        if east_y > mid_point_y:
+        if east_x > mid_point_x:
             flip = 'horizontal'
-        elif east_y < mid_point_y:
+        elif east_x < mid_point_x:
             flip = None
         else:
             print('East is on the midline, check image')

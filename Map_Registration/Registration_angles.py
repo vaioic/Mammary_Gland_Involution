@@ -403,41 +403,49 @@ class Registration:
         """
         Build a composite pre-alignment transform (fixed→moving, backward convention).
 
-        Transform order (first-added = first-applied to p_fixed):
-          1. centroid alignment  — moves p_fixed into the moving image's neighborhood
-          2. rotation            — undoes the forward CCW orientation rotation (uses -rads)
-          3. flip                — undoes the forward horizontal flip (flip is self-inverse)
+        Forward orientation operations applied to the moving image:
+          1. Rotate CCW by angle_degrees around moving mask centroid → north to top
+          2. Flip horizontally around moving mask centroid (if needed) → east to left
+          3. Translate moving centroid to fixed centroid
 
-        The rotation and flip are centred on the physical centre of the moving image, which
-        is valid because add_padding centres the tissue in a square canvas.
+        Backward (fixed→moving) composite undoes these in reverse order.
+        SimpleITK CompositeTransform applies transforms first-added → first-applied,
+        so the add order must be the reverse of the undo order:
+          add 1st (applied 1st): centroid alignment (un-translate)
+          add 2nd (applied 2nd): horizontal flip    (un-flip, self-inverse)
+          add 3rd (applied 3rd): rotation by -rads  (un-rotate)
+
+        All rotation and flip transforms are centred on the physical centroid of the
+        moving mask (not the image centre) so that the centroid stays fixed under
+        rotation and flip, guaranteeing the aligned centroid remains within the
+        moving image bounds.
         """
         composite_transform = sitk.CompositeTransform(2)
 
-        # 1. Centroid alignment: translate fixed centroid to moving centroid.
+        # Centroid of the moving mask in physical coordinates — used as the centre
+        # for both rotation and flip so that those transforms leave the centroid fixed.
+        moving_centroid = self.get_mask_centroid(sitk_moving)
+
+        # 1. Centroid alignment: translate fixed centroid → moving centroid.
         centroid_transform = self.get_centroid_alignment_transform(sitk_moving, sitk_fixed)
         composite_transform.AddTransform(centroid_transform)
 
-        moving_center = sitk_moving.TransformContinuousIndexToPhysicalPoint(
-            [(sz - 1) / 2.0 for sz in sitk_moving.GetSize()]
-        )
-
-        # 2. Rotation (backward): the forward orientation rotates the moving image CCW by
-        #    angle_degrees.  In the fixed→moving (backward) direction we must apply -rads
-        #    so that we look up the correct pixel in the original, un-rotated moving image.
-        if rads is not None:
-            print(f"  Applying rotation: {angle_degrees:.2f} degrees")
-            rotation_transform = sitk.Euler2DTransform()
-            rotation_transform.SetCenter(moving_center)
-            rotation_transform.SetAngle(-rads)
-            composite_transform.AddTransform(rotation_transform)
-
-        # 3. Flip (backward): horizontal flip is self-inverse, so the same matrix undoes it.
+        # 2. Un-flip (added before un-rotate because forward order was rotate → flip,
+        #    so backward order is un-flip → un-rotate).
         if flip is not None:
             print(f"  Applying flip: {flip}")
             flip_transform = sitk.AffineTransform(sitk_moving.GetDimension())
-            flip_transform.SetCenter(moving_center)
-            flip_transform.SetMatrix([-1, 0, 0, 1])   # horizontal flip: x → -x about centre
+            flip_transform.SetCenter(moving_centroid)
+            flip_transform.SetMatrix([-1, 0, 0, 1])   # horizontal flip: x → -(x-cx)+cx
             composite_transform.AddTransform(flip_transform)
+
+        # 3. Un-rotate: backward rotation is -rads (forward CCW → backward CW).
+        if rads is not None:
+            print(f"  Applying rotation: {angle_degrees:.2f} degrees")
+            rotation_transform = sitk.Euler2DTransform()
+            rotation_transform.SetCenter(moving_centroid)
+            rotation_transform.SetAngle(-rads)
+            composite_transform.AddTransform(rotation_transform)
 
         if flip is None and rads is None:
             print("  No flip or rotation applied.")

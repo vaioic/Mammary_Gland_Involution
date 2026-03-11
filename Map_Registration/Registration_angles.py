@@ -328,7 +328,8 @@ class Registration:
             mask_arr):
         """
         Determine the flip and/or rotation needed to orient the moving image so that
-        north points up and east points left.
+        north points up and east points left, with "true north" defined as orthogonal
+        to the detected east-west axis.
 
         Parameters
         ----------
@@ -345,27 +346,41 @@ class Registration:
             raise ValueError(f"No tissue mask pixels found for {name}")
         cy, cx = tissue_pixels.mean(axis=0)  # (y, x)
 
-        # Compute CCW rotation angle needed to bring the north marker above the centroid.
-        # Image coordinates: x increases right, y increases down; "up" is -y.
+        def _wrap_degrees(deg: float) -> float:
+            # Map to [-180, 180)
+            return ((deg + 180.0) % 360.0) - 180.0
+
+        # Work in vector form around the tissue centroid to avoid dependence on image center.
+        # Use EAST to define the true east-west axis, then choose the 180° branch that makes NORTH point up.
         y_n, x_n = points['north']
-        dy = y_n - cy   # positive = below centroid (south)
-        dx = x_n - cx   # positive = right of centroid (east)
-        angle_degrees = math.degrees(math.atan2(dx, -dy))
-        rads = math.radians(angle_degrees)
-
-        # Determine if a horizontal flip is needed by rotating the east marker around the centroid.
         y_e, x_e = points['east']
-        cos_t = math.cos(rads)
-        sin_t = math.sin(rads)
-        x0 = x_e - cx
-        y0 = y_e - cy
-        x_rot = (cos_t * x0) - (sin_t * y0) + cx
+        dx_n, dy_n = (x_n - cx), (y_n - cy)
+        dx_e, dy_e = (x_e - cx), (y_e - cy)
 
-        if abs(x_rot - cx) < 1.0:
-            print('East is on the midline after rotation, check image')
+        # CCW rotation (screen/image coordinates) needed to rotate the EAST vector to point LEFT (-x).
+        # angle_e is the current angle of EAST relative to +x; desired is 180° (left).
+        angle_e = math.degrees(math.atan2(dy_e, dx_e))
+        angle_degrees = _wrap_degrees(180.0 - angle_e)
+
+        def _rotate(dx: float, dy: float, deg: float) -> tuple[float, float]:
+            r = math.radians(deg)
+            c = math.cos(r)
+            s = math.sin(r)
+            return (c * dx - s * dy, s * dx + c * dy)
+
+        # Ensure NORTH ends up pointing up (-y). If not, rotate an additional 180°.
+        _, dy_n_rot = _rotate(dx_n, dy_n, angle_degrees)
+        if dy_n_rot > 0:
+            angle_degrees = _wrap_degrees(angle_degrees + 180.0)
+
+        # Determine horizontal flip after rotation to enforce EAST to the left.
+        dx_e_rot, _ = _rotate(dx_e, dy_e, angle_degrees)
+        if abs(dx_e_rot) < 1.0:
+            print('East is on (or too close to) the midline after rotation, check image')
             raise ValueError("ORIENTATION_MISMATCH")
+        flip = 'horizontal' if dx_e_rot > 0 else None
 
-        flip = 'horizontal' if x_rot > cx else None
+        rads = math.radians(angle_degrees)
         print(f'Detected Flip: {flip}')
         print(f'Detected Rotation: {angle_degrees:.2f} degrees ({rads:.4f} radians)')
         return flip, rads, angle_degrees

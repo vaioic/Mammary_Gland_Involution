@@ -74,7 +74,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                         sitk_fixed, sitk_moving = reg.load_sitk_imgs(map_region, pad_mask_bbox, spacing)
                         composite_transform = reg.apply_flip_rotation(sitk_moving, sitk_fixed, flip, angle_radians, angle_degrees)
                         transform = reg.refine_registration(sitk_moving, sitk_fixed, composite_transform,
-                                                            data_path, row['Tissue.ID'], row['Image'])
+                                                            data_path, row['Tissue.ID'], row['Image'],16.0)
                         tile_coordinates = tile_centroid_df_gland[
                             (tile_centroid_df_gland['Tiles_Image'] == row['Image']) &
                             (tile_centroid_df_gland['Tiles_Parent'] == row['Tissue.ID'])

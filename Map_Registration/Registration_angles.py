@@ -80,7 +80,7 @@ def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, 
                             (tile_centroid_df_gland['Tiles_Parent'] == row['Tissue.ID'])
                         ]
                         saved_dfs.append(reg.transform_points(transform, tile_coordinates, data_path, name))
-                        reg.plot_registered_tissue(pad_img_bbox,map_region,spacing,transform,name,data_path)
+                        reg.plot_registered_tissue(padded_img=pad_img_bbox,map_region=map_region,spacing=spacing,transform=transform,name=name,path_to_tissue_masks=data_path)
                     except Exception as e:                        #outer row except
                         raise RuntimeError(f"Failed processing image {name}: {e}")
                 if saved_dfs:

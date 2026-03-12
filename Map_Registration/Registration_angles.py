@@ -74,7 +74,7 @@ class Registration:
         del tile_df, anno_df
         return data_path, map_path, filtered_tile_df, filtered_anno_df, grey_value_df
         
-    def write_qc_logs(self, map_region_failures, orientation_failures, cardinal_point_failures, refine_transform_failures, data_path, animal_id, gland):
+    def write_qc_logs(self, map_region_failures, orientation_failures, cardinal_point_failures, refine_transform_failures, post_transform_orientation_failures, data_path, animal_id, gland):
         qc_path = os.path.join(data_path, 'QC_logs')
         os.makedirs(qc_path, exist_ok=True)
     
@@ -97,8 +97,13 @@ class Registration:
             transform_df = pd.DataFrame(refine_transform_failures)
             transform_df.to_csv(os.path.join(qc_path, f'{animal_id}_{gland}_refine_transform_failures.csv'), index=False)
             print(f"  {len(refine_transform_failures)} cardinal point detection failure(s) written for {animal_id} {gland}")
+
+        if post_transform_orientation_failures:
+            post_orient_df = pd.DataFrame(post_transform_orientation_failures)
+            post_orient_df.to_csv(os.path.join(qc_path, f'{animal_id}_{gland}_post_transform_orientation_failures.csv'), index=False)
+            print(f"  {len(post_transform_orientation_failures)} post-transform orientation failure(s) written for {animal_id} {gland}")
     
-        if not map_region_failures and not orientation_failures and not cardinal_point_failures and not refine_transform_failures:
+        if not map_region_failures and not orientation_failures and not cardinal_point_failures and not refine_transform_failures and not post_transform_orientation_failures:
             print(f"  No QC failures for {animal_id} {gland}")
         
     def get_animal_ids(
@@ -489,8 +494,8 @@ class Registration:
         # translation-only refinement. This enforces a hard cap on rotation drift.
         chosen_initial = composite_transform
         chosen_delta_deg = 0.0
-        if max_rotation_degrees and max_rotation_degrees > 0:
-            step = float(rotation_step_degrees) if rotation_step_degrees and rotation_step_degrees > 0 else 2.0
+        if max_rotation_degrees > 0:
+            step = float(rotation_step_degrees) if rotation_step_degrees > 0 else 2.0
             max_deg = float(max_rotation_degrees)
             # Coarse-to-fine search.
             coarse_angles = np.arange(-max_deg, max_deg + (step * 0.5), step, dtype=float)
@@ -542,6 +547,77 @@ class Registration:
         full_composite.FlattenTransform()
         full_composite.WriteTransform(save_file_hdf)
         return full_composite
+
+    def qc_check_orientation(self, sitk_moving, fixed_to_moving_transform, points, name, tissue_id, stage: str):
+        """
+        QC check: verify that after applying the current transform, NORTH points up and EAST points left
+        in the fixed image coordinate system.
+
+        Notes
+        -----
+        - SimpleITK resampling uses fixed->moving transforms. To map detected points (in moving) into
+          fixed space we use the inverse (moving->fixed).
+        - Points are provided as (y,x) pixel coordinates on the moving image array.
+        """
+        required = ("north", "east")
+        if any(k not in points for k in required):
+            return False, {"Stage": stage, "Name": name, "Tissue_ID": tissue_id, "Reason": "Missing cardinal points"}
+
+        try:
+            moving_to_fixed = fixed_to_moving_transform.GetInverse()
+        except Exception as e:
+            return False, {"Stage": stage, "Name": name, "Tissue_ID": tissue_id, "Reason": f"Transform not invertible: {e}"}
+
+        # Convert (y,x) pixel coordinates to physical points in moving space.
+        north_y, north_x = float(points["north"][0]), float(points["north"][1])
+        east_y, east_x = float(points["east"][0]), float(points["east"][1])
+        north_phys = sitk_moving.TransformContinuousIndexToPhysicalPoint((north_x, north_y))
+        east_phys = sitk_moving.TransformContinuousIndexToPhysicalPoint((east_x, east_y))
+
+        moving_centroid_phys = self.get_mask_centroid(sitk_moving)
+
+        # Map into fixed space.
+        north_fixed = moving_to_fixed.TransformPoint(north_phys)
+        east_fixed = moving_to_fixed.TransformPoint(east_phys)
+        centroid_fixed = moving_to_fixed.TransformPoint(moving_centroid_phys)
+
+        dx_n = float(north_fixed[0] - centroid_fixed[0])
+        dy_n = float(north_fixed[1] - centroid_fixed[1])
+        dx_e = float(east_fixed[0] - centroid_fixed[0])
+        dy_e = float(east_fixed[1] - centroid_fixed[1])
+
+        # In image/physical coordinates from GetImageFromArray with positive spacing, +y is down.
+        # Expect NORTH to have dy<0 (up) and EAST to have dx<0 (left).
+        eps = 1e-6
+        north_ok = dy_n < -eps
+        east_ok = dx_e < -eps
+
+        def _angle_deg(dx: float, dy: float) -> float:
+            return float(math.degrees(math.atan2(dy, dx)))
+
+        record = {
+            "Stage": stage,
+            "Name": name,
+            "Tissue_ID": tissue_id,
+            "North_dx_fixed": dx_n,
+            "North_dy_fixed": dy_n,
+            "North_angle_deg": _angle_deg(dx_n, dy_n),
+            "East_dx_fixed": dx_e,
+            "East_dy_fixed": dy_e,
+            "East_angle_deg": _angle_deg(dx_e, dy_e),
+            "Pass": bool(north_ok and east_ok),
+        }
+
+        if not north_ok and abs(dy_n) <= eps:
+            record["Reason"] = "North near-horizontal/ambiguous"
+        elif not north_ok:
+            record["Reason"] = "North not up"
+        elif not east_ok and abs(dx_e) <= eps:
+            record["Reason"] = "East near-vertical/ambiguous"
+        elif not east_ok:
+            record["Reason"] = "East not left"
+
+        return bool(north_ok and east_ok), record
     
     def transform_points(self,transform,tile_df,path_to_tissue_masks,name):
         save_path = os.path.join(path_to_tissue_masks,'Transformed_Coordinates')
@@ -609,6 +685,7 @@ class Registration:
                     orientation_failures = []  # Bug 1 fixed
                     cardinal_point_failures = []
                     refine_transform_failures = []
+                    post_transform_orientation_failures = []
 
                     for _, row in gland_df.iterrows():
                         name = row['Image'] + '_' + row['Tissue.ID']
@@ -652,6 +729,18 @@ class Registration:
 
                             sitk_fixed, sitk_moving = self.load_sitk_imgs(map_region, pad_mask_bbox, spacing)
                             composite_transform = self.apply_flip_rotation(sitk_moving, sitk_fixed, flip, angle_radians, angle_degrees)
+
+                            ok, qc_record = self.qc_check_orientation(
+                                sitk_moving=sitk_moving,
+                                fixed_to_moving_transform=composite_transform,
+                                points=points,
+                                name=name,
+                                tissue_id=row['Tissue.ID'],
+                                stage="pre_refine"
+                            )
+                            if not ok:
+                                print(f"  WARNING: Pre-refine orientation QC failed for {name}: {qc_record.get('Reason', 'unknown')}")
+                                post_transform_orientation_failures.append(qc_record)
                             try:
                                 transform = self.refine_registration(sitk_moving, sitk_fixed, composite_transform,
                                                                 data_path, row['Tissue.ID'], row['Image'])
@@ -664,6 +753,18 @@ class Registration:
                                 })
                                 continue
 
+                            ok, qc_record = self.qc_check_orientation(
+                                sitk_moving=sitk_moving,
+                                fixed_to_moving_transform=transform,
+                                points=points,
+                                name=name,
+                                tissue_id=row['Tissue.ID'],
+                                stage="post_refine"
+                            )
+                            if not ok:
+                                print(f"  WARNING: Post-refine orientation QC failed for {name}: {qc_record.get('Reason', 'unknown')}")
+                                post_transform_orientation_failures.append(qc_record)
+
                             tile_coordinates = tile_centroid_df_gland[
                                 (tile_centroid_df_gland['Tiles_Image'] == row['Image']) &
                                 (tile_centroid_df_gland['Tiles_Parent'] == row['Tissue.ID'])
@@ -674,17 +775,16 @@ class Registration:
                             self.plot_registered_tissue(padded_img=pad_img_bbox,map_region=map_region,spacing=spacing,transform=transform,name=name,path_to_tissue_masks=data_path)
                         except Exception as e:                        #outer row except
                             raise RuntimeError(f"Failed processing image {name}: {e}")
-                    if saved_df_paths:
-                        concat_dfs = pd.concat(transformed_tile_dfs,ignore_index=True)
-                        save_path_concat_dfs = os.path.join(data_path,'Transformed_Coordinates_per_Animal')
-                        os.makedirs(save_path_concat_dfs,exist_ok=True)
-                        concat_dfs.to_csv(os.path.join(save_path_concat_dfs,f'{animal_id}_{gland}_Transformed_Tile_Data.csv'),index=False)
-                        self.plot_transformed_points(saved_df_paths,animal_id,gland,data_path)
-                    self.write_qc_logs(map_region_failures, orientation_failures, cardinal_point_failures, data_path, animal_id, gland)
+                        if saved_df_paths:
+                            concat_dfs = pd.concat(transformed_tile_dfs,ignore_index=True)
+                            save_path_concat_dfs = os.path.join(data_path,'Transformed_Coordinates_per_Animal')
+                            os.makedirs(save_path_concat_dfs,exist_ok=True)
+                            concat_dfs.to_csv(os.path.join(save_path_concat_dfs,f'{animal_id}_{gland}_Transformed_Tile_Data.csv'),index=False)
+                            self.plot_transformed_points(saved_df_paths,animal_id,gland,data_path)
+                        self.write_qc_logs(map_region_failures, orientation_failures, cardinal_point_failures, refine_transform_failures, post_transform_orientation_failures, data_path, animal_id, gland)
                 except Exception as e:
                     print(f"Failed processing gland {gland} for animal {animal_id}: {e}")
                     continue
-
         except Exception as e:
             raise RuntimeError(f"Failed processing animal {animal_id}: {e}")
     

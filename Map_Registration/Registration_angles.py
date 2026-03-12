@@ -66,7 +66,7 @@ class Registration:
         tile_df['Tiles_Centroid_X_um'] = tile_df['Tiles_Centroid_X_um'].astype(float) 
         tile_df['Tiles_Centroid_Y_um'] = tile_df['Tiles_Centroid_Y_um'].astype(float)
         anno_df = pd.read_csv(Path(path_to_anno_df),dtype=str)
-        grey_value_df = pd.read_csv(Path(path_to_grey_value_key),dtype=str,usecols=['Mapping_ID,Map_Grey_value,Mask_IDs,Mask_Grey_Value'])
+        grey_value_df = pd.read_csv(Path(path_to_grey_value_key),dtype=str)
         grey_value_df['Map_Grey_value'] = grey_value_df['Map_Grey_value'].astype(float)
         grey_value_df['Mask_Grey_Value'] = grey_value_df['Mask_Grey_Value'].astype(float)
         filtered_tile_df = tile_df[tile_df['Tiles_Genotype']==genotype]
@@ -711,7 +711,9 @@ class Registration:
                                     print(f"  Orientation failure logged for {name}")
                                     orientation_failures.append({
                                         'Image': row['Image'],
-                                        'Tissue_ID': row['Tissue.ID']
+                                        'Tissue_ID': row['Tissue.ID'],
+                                        'Reason': 'East is on (or too close to) the midline after rotation, check image'
+
                                     })
                                     continue
                                 raise

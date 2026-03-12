@@ -12,105 +12,6 @@ import time
 import matplotlib.pyplot as plt
 import math
 
-def process_data(animal_id, tile_centroids, anno_data, grey_value_df, map_path, data_path):
-    try:
-        anno_df = anno_data[anno_data['AnimalID'] == animal_id]
-        glands = anno_df['Gland.side'].unique().tolist()
-        for gland in glands:
-            try:        
-                gland_df = anno_df[anno_df['Gland.side'] == gland]
-                map_base = gland_df['MapBase'].unique().tolist()[0]
-                map_base_path = os.path.join(map_path, f'{map_base}.png')
-                map_arr = np.array(Image.open(map_base_path).convert('L'))
-                tile_centroid_df_animal = tile_centroids[tile_centroids['Tiles_AnimalID'] == animal_id]
-                tile_centroid_df_gland = tile_centroid_df_animal[tile_centroid_df_animal['Tiles_Gland_side'] == gland]
-                spacing = (16.1, 16.1)
-                reg = Registration.__new__(Registration)
-                saved_df_paths = []
-                transformed_tile_dfs = []
-                map_region_failures = []
-                orientation_failures = []  # Bug 1 fixed
-                cardinal_point_failures = []
-                refine_transform_failures = []
-
-                for _, row in gland_df.iterrows():
-                    name = row['Image'] + '_' + row['Tissue.ID']
-                    try:                                          # outer row try
-                        tissue_path = os.path.join(data_path, row['Tissue.ID'], row['Image'] + '.svs.png')
-                        tissue_arr = reg.open_img(tissue_path)
-                        img_bbox, cropped_mask = reg.get_tissue_bbox(tissue_arr, row['Image'], row['Tissue.ID'], data_path)
-                        pad_img_bbox, pad_mask_bbox = reg.add_padding(img_bbox, cropped_mask, row['Image'], row['Tissue.ID'], data_path)
-                        try:
-                            points = reg.get_cardinal_points(pad_img_bbox, name, grey_value_df, ('north', 'east'))
-                        except ValueError as e:
-                            print(f"  Cardinal Point Detection failure logged for {name}")
-                            cardinal_point_failures.append({
-                                'Image': row['Image'],
-                                'Tissue': row['Tissue.ID']
-                            })
-                            continue
-
-                        try:                                      # orientation try
-                            flip, angle_radians, angle_degrees = reg.orient_tissue(points, name, grey_value_df, pad_mask_bbox)
-                        except ValueError as e:
-                            if "ORIENTATION_MISMATCH" in str(e):
-                                print(f"  Orientation failure logged for {name}")
-                                orientation_failures.append({
-                                    'Image': row['Image'],
-                                    'Tissue_ID': row['Tissue.ID']
-                                })
-                                continue
-                            raise
-
-                        try:                                      # map region try
-                            map_region = reg.get_map_region(map_arr, row['MappingID'], grey_value_df)
-                        except ValueError:
-                            print(f"  Map region failure logged for {name}")
-                            map_region_failures.append({
-                                'Image': row['Image'],
-                                'Mapping_ID': row['MappingID'],
-                                'Map_Base': map_base
-                            })
-                            continue
-
-                        sitk_fixed, sitk_moving = reg.load_sitk_imgs(map_region, pad_mask_bbox, spacing)
-                        composite_transform = reg.apply_flip_rotation(sitk_moving, sitk_fixed, flip, angle_radians, angle_degrees)
-                        try:
-                            transform = reg.refine_registration(sitk_moving, sitk_fixed, composite_transform,
-                                                            data_path, row['Tissue.ID'], row['Image'])
-                        except ValueError:
-                            print(f"  Refined Transform error logged for {name}")
-                            refine_transform_failures.append({
-                                'Image': row['Image'],
-                                'Mapping_ID': row['MappingID'],
-                                'Map_Base': map_base
-                            })
-                            continue
-
-                        tile_coordinates = tile_centroid_df_gland[
-                            (tile_centroid_df_gland['Tiles_Image'] == row['Image']) &
-                            (tile_centroid_df_gland['Tiles_Parent'] == row['Tissue.ID'])
-                        ]
-                        df_path, transformed_tile_df = reg.transform_points(transform, tile_coordinates, data_path, name)
-                        saved_df_paths.append(df_path)
-                        transformed_tile_dfs.append(transformed_tile_df)
-                        reg.plot_registered_tissue(padded_img=pad_img_bbox,map_region=map_region,spacing=spacing,transform=transform,name=name,path_to_tissue_masks=data_path)
-                    except Exception as e:                        #outer row except
-                        raise RuntimeError(f"Failed processing image {name}: {e}")
-                if saved_df_paths:
-                    concat_dfs = pd.concat(transformed_tile_dfs,ignore_index=True)
-                    save_path_concat_dfs = os.path.join(data_path,'Transformed_Coordinates_per_Animal')
-                    os.makedirs(save_path_concat_dfs,exist_ok=True)
-                    concat_dfs.to_csv(os.path.join(save_path_concat_dfs,f'{animal_id}_{gland}_Transformed_Tile_Data.csv'),index=False)
-                    reg.plot_transformed_points(saved_df_paths,animal_id,gland,data_path)
-                reg.write_qc_logs(map_region_failures, orientation_failures, cardinal_point_failures, data_path, animal_id, gland)
-            except Exception as e:
-                print(f"Failed processing gland {gland} for animal {animal_id}: {e}")
-                continue
-
-    except Exception as e:
-        raise RuntimeError(f"Failed processing animal {animal_id}: {e}")
-
 class Registration:
     """ 
     Register each tissue mask to its corresponding map region and then use the transformation matrix
@@ -165,9 +66,9 @@ class Registration:
         tile_df['Tiles_Centroid_X_um'] = tile_df['Tiles_Centroid_X_um'].astype(float) 
         tile_df['Tiles_Centroid_Y_um'] = tile_df['Tiles_Centroid_Y_um'].astype(float)
         anno_df = pd.read_csv(Path(path_to_anno_df),dtype=str)
-        grey_value_df = pd.read_csv(Path(path_to_grey_value_key),dtype=str,usecols=['Mapping_ID','Map_Grey_value','Tissue_Grey_value'])
+        grey_value_df = pd.read_csv(Path(path_to_grey_value_key),dtype=str,usecols=['Mapping_ID,Map_Grey_value,Mask_IDs,Mask_Grey_Value'])
         grey_value_df['Map_Grey_value'] = grey_value_df['Map_Grey_value'].astype(float)
-        grey_value_df['Tissue_Grey_value'] = grey_value_df['Tissue_Grey_value'].astype(float)
+        grey_value_df['Mask_Grey_Value'] = grey_value_df['Mask_Grey_Value'].astype(float)
         filtered_tile_df = tile_df[tile_df['Tiles_Genotype']==genotype]
         filtered_anno_df = anno_df[anno_df['Genotype']==genotype]
         del tile_df, anno_df
@@ -207,7 +108,14 @@ class Registration:
         animal_ids = filtered_anno_df['AnimalID'].unique().tolist()
         return animal_ids
     
-    def open_img(
+    def open_mask(
+            self,
+            img_path: str
+        ):
+        arr = sk.io.imread(img_path)
+        return arr
+    
+    def open_map(
             self,
             img_path: str
         ):
@@ -228,9 +136,9 @@ class Registration:
         maxc = max(props, key=lambda p: p.bbox[2])
         maxr = max(props, key=lambda p: p.bbox[3])
         img_bbox = tissue_arr[minc.bbox[0]-10:maxc.bbox[2]+10,minr.bbox[1]-10:maxr.bbox[3]+10]
-        cropped_mask = (img_bbox==largest_obj_label)*img_bbox
+        bool_mask = (img_bbox==largest_obj_label)
+        cropped_mask = sk.img_as_ubyte(bool_mask)
         cropped_mask = ndimage.binary_fill_holes(cropped_mask)
-        cropped_mask = sk.img_as_ubyte(cropped_mask)
         save_path_img = os.path.join(data_path,tissue_id,'cropped_image')
         save_path_mask = os.path.join(data_path,tissue_id,'cropped_mask')
         os.makedirs(save_path_img,exist_ok=True)
@@ -270,13 +178,15 @@ class Registration:
             map_id,
             grey_value_df):
         grey_value = grey_value_df.loc[grey_value_df['Mapping_ID'] == map_id, 'Map_Grey_value'].values[0] 
-        map_region = (map_arr == grey_value).astype(np.float32)
+        map_region = (map_arr == grey_value)
+        map_region = sk.img_as_ubyte(map_region)
         map_region = ndimage.binary_fill_holes(map_region)
         labels = sk.measure.label(map_region)
         props = sk.measure.regionprops(labels)
         largest_obj = max(props, key=lambda p: p.area)
         largest_obj_label = largest_obj.label
-        masked_map_region = (labels==largest_obj_label)*map_region
+        bool_map_region = (labels==largest_obj_label)
+        masked_map_region = sk.img_as_ubyte(bool_map_region)
         if not map_region.any():
             raise ValueError(f"Map region for ID '{map_id}' (grey value {grey_value}) is empty check map image and grey value key.")
         return masked_map_region
@@ -318,7 +228,8 @@ class Registration:
             img_bbox,
             name,
             grey_value_df,
-            direction):
+            tissue,
+            ):
         """
         Extract one or more cardinal points from an image.
 
@@ -333,15 +244,24 @@ class Registration:
         dict[str, np.ndarray]
             Keys are directions and values are (y,x) arrays (float).
         """
-        points = {}
-        directions = (direction,) if isinstance(direction, str) else tuple(direction)
-        for d in directions:
-            grey = grey_value_df.loc[grey_value_df['Mapping_ID'] == d, 'Tissue_Grey_value'].values[0]
+        points = {'north':[],
+                  'east':[]}
+        keys = ['north','east']
+        if tissue == 'Tissue':
+            directions = ('North','East')
+        if tissue == 'Tissue1':
+            directions = ('North1','East1')
+        if tissue == 'Tissue2':
+            directions = ('North2','East2')
+        if tissue == 'Tissue3':
+            directions = ('North3','East3')
+        for i,d in enumerate(directions):
+            grey = grey_value_df.loc[grey_value_df['Mask_IDs'] == d, 'Mask_Grey_Value'].values[0]
             print(f'Grey value for {d} is {grey}')
             pt = self.detect_cardinal_point(img_bbox, grey, name)
             if pt is None:
                 raise ValueError(f"Could not find '{d}' point in {name}")
-            points[d] = pt
+            points[keys[i]] = pt
             print(f"  {d}: pixel (y,x) ({pt[0]:.1f}, {pt[1]:.1f})")
         return points
     
@@ -664,12 +584,110 @@ class Registration:
         fig, axes = plt.subplots()
         fixed  = sitk.GetArrayFromImage(sitk_fixed)
         moved  = sitk.GetArrayFromImage(resampled)
-        axes.imshow(fixed, cmap="gray")
-        axes.imshow(moved,cmap="Reds",alpha=0.5)
+        axes.imshow(fixed, cmap="Greys")
+        axes.imshow(moved,cmap="Reds",alpha=0.7)
         plt.tight_layout()
         plt.savefig(save_img, dpi=600)
         plt.close()
 
+    def process_data(self, animal_id, tile_centroids, anno_data, grey_value_df, map_path, data_path):
+        try:
+            anno_df = anno_data[anno_data['AnimalID'] == animal_id]
+            glands = anno_df['Gland.side'].unique().tolist()
+            for gland in glands:
+                try:        
+                    gland_df = anno_df[anno_df['Gland.side'] == gland]
+                    map_base = gland_df['MapBase'].unique().tolist()[0]
+                    map_base_path = os.path.join(map_path, f'{map_base}.png')
+                    map_arr = self.open_map(map_base_path)
+                    tile_centroid_df_animal = tile_centroids[tile_centroids['Tiles_AnimalID'] == animal_id]
+                    tile_centroid_df_gland = tile_centroid_df_animal[tile_centroid_df_animal['Tiles_Gland_side'] == gland]
+                    spacing = (16.1, 16.1)
+                    saved_df_paths = []
+                    transformed_tile_dfs = []
+                    map_region_failures = []
+                    orientation_failures = []  # Bug 1 fixed
+                    cardinal_point_failures = []
+                    refine_transform_failures = []
+
+                    for _, row in gland_df.iterrows():
+                        name = row['Image'] + '_' + row['Tissue.ID']
+                        try:                                          # outer row try
+                            tissue_path = os.path.join(data_path, row['Tissue.ID'], row['Image'] + '.svs.png')
+                            tissue_arr = self.open_mask(tissue_path)
+                            img_bbox, cropped_mask = self.get_tissue_bbox(tissue_arr, row['Image'], row['Tissue.ID'], data_path)
+                            pad_img_bbox, pad_mask_bbox = self.add_padding(img_bbox, cropped_mask, row['Image'], row['Tissue.ID'], data_path)
+                            try:
+                                points = self.get_cardinal_points(pad_img_bbox, name, grey_value_df,row['Tissue.ID'])
+                            except ValueError as e:
+                                print(f"  Cardinal Point Detection failure logged for {name}")
+                                cardinal_point_failures.append({
+                                    'Image': row['Image'],
+                                    'Tissue': row['Tissue.ID']
+                                })
+                                continue
+
+                            try:                                      # orientation try
+                                flip, angle_radians, angle_degrees = self.orient_tissue(points, name, pad_mask_bbox)
+                            except ValueError as e:
+                                if "ORIENTATION_MISMATCH" in str(e):
+                                    print(f"  Orientation failure logged for {name}")
+                                    orientation_failures.append({
+                                        'Image': row['Image'],
+                                        'Tissue_ID': row['Tissue.ID']
+                                    })
+                                    continue
+                                raise
+
+                            try:                                      # map region try
+                                map_region = self.get_map_region(map_arr, row['MappingID'], grey_value_df)
+                            except ValueError:
+                                print(f"  Map region failure logged for {name}")
+                                map_region_failures.append({
+                                    'Image': row['Image'],
+                                    'Mapping_ID': row['MappingID'],
+                                    'Map_Base': map_base
+                                })
+                                continue
+
+                            sitk_fixed, sitk_moving = self.load_sitk_imgs(map_region, pad_mask_bbox, spacing)
+                            composite_transform = self.apply_flip_rotation(sitk_moving, sitk_fixed, flip, angle_radians, angle_degrees)
+                            try:
+                                transform = self.refine_registration(sitk_moving, sitk_fixed, composite_transform,
+                                                                data_path, row['Tissue.ID'], row['Image'])
+                            except ValueError:
+                                print(f"  Refined Transform error logged for {name}")
+                                refine_transform_failures.append({
+                                    'Image': row['Image'],
+                                    'Mapping_ID': row['MappingID'],
+                                    'Map_Base': map_base
+                                })
+                                continue
+
+                            tile_coordinates = tile_centroid_df_gland[
+                                (tile_centroid_df_gland['Tiles_Image'] == row['Image']) &
+                                (tile_centroid_df_gland['Tiles_Parent'] == row['Tissue.ID'])
+                            ]
+                            df_path, transformed_tile_df = self.transform_points(transform, tile_coordinates, data_path, name)
+                            saved_df_paths.append(df_path)
+                            transformed_tile_dfs.append(transformed_tile_df)
+                            self.plot_registered_tissue(padded_img=pad_img_bbox,map_region=map_region,spacing=spacing,transform=transform,name=name,path_to_tissue_masks=data_path)
+                        except Exception as e:                        #outer row except
+                            raise RuntimeError(f"Failed processing image {name}: {e}")
+                    if saved_df_paths:
+                        concat_dfs = pd.concat(transformed_tile_dfs,ignore_index=True)
+                        save_path_concat_dfs = os.path.join(data_path,'Transformed_Coordinates_per_Animal')
+                        os.makedirs(save_path_concat_dfs,exist_ok=True)
+                        concat_dfs.to_csv(os.path.join(save_path_concat_dfs,f'{animal_id}_{gland}_Transformed_Tile_Data.csv'),index=False)
+                        self.plot_transformed_points(saved_df_paths,animal_id,gland,data_path)
+                    self.write_qc_logs(map_region_failures, orientation_failures, cardinal_point_failures, data_path, animal_id, gland)
+                except Exception as e:
+                    print(f"Failed processing gland {gland} for animal {animal_id}: {e}")
+                    continue
+
+        except Exception as e:
+            raise RuntimeError(f"Failed processing animal {animal_id}: {e}")
+    
     def run(self):
         data_path, map_path, filtered_tile_df, filtered_anno_df, grey_value_df = self.set_up_pipeline(self.path_to_tissue_masks,
                                                                                                         self.path_to_maps,
@@ -687,7 +705,7 @@ class Registration:
         
         for animal_id in animal_ids:
             try:
-                process_data(animal_id, filtered_tile_df, filtered_anno_df, grey_value_df, map_path, data_path)
+                self.process_data(animal_id, filtered_tile_df, filtered_anno_df, grey_value_df, map_path, data_path)
                 run_summary["success"] += 1
             except Exception as e:
                 print(f" ERROR on animal {animal_id}: {e}")

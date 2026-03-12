@@ -274,7 +274,7 @@ class Registration:
             self,
             points,
             name,
-            mask_arr):
+            pad_img):
         """
         Determine the flip and/or rotation needed to orient the moving image so that
         north points up and east points left, with "true north" defined as orthogonal
@@ -290,7 +290,7 @@ class Registration:
         if 'north' not in points or 'east' not in points:
             raise ValueError(f"Missing required cardinal points for {name}. Found: {list(points.keys())}")
 
-        tissue_pixels = np.argwhere(np.asarray(mask_arr) > 0)
+        tissue_pixels = np.argwhere(pad_img == 3)
         if tissue_pixels.size == 0:
             raise ValueError(f"No tissue mask pixels found for {name}")
         cy, cx = tissue_pixels.mean(axis=0)  # (y, x)
@@ -705,7 +705,7 @@ class Registration:
                                 continue
 
                             try:                                      # orientation try
-                                flip, angle_radians, angle_degrees = self.orient_tissue(points, name, pad_mask_bbox)
+                                flip, angle_radians, angle_degrees = self.orient_tissue(points, name, pad_img_bbox)
                             except ValueError as e:
                                 if "ORIENTATION_MISMATCH" in str(e):
                                     print(f"  Orientation failure logged for {name}")

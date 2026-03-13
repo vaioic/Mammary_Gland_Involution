@@ -17,8 +17,12 @@ class Resize_Maps:
     def __init__(
             self,
             path_to_maps: str,
+            save_loc: str,
+            spacing: float,
     ):
         self.path_to_maps = path_to_maps
+        self.save_loc = save_loc
+        self.spacing = spacing
 
     def calculate_avg_tissue_size(self):
         avg_y = round(float(np.average([5.3,6.1])),4)
@@ -40,7 +44,7 @@ class Resize_Maps:
                 map_arr,
                 avg_y,
                 avg_x,
-                target_spacing = 16.1):
+                target_spacing):
         """ 
         Resizes image based on target spacing
         Returns the resized image
@@ -57,13 +61,12 @@ class Resize_Maps:
         return resized_map
     
     def save_maps(self,
-                  path_to_maps,
+                  save_loc,
                   names,
                   map_arrays):
-        save_path = os.path.join(path_to_maps,'resized_maps')
-        os.makedirs(save_path,exist_ok=True)
+        os.makedirs(save_loc,exist_ok=True)
         for name,map_array in zip(names,map_arrays):
-            Image.fromarray(map_array).save(os.path.join(save_path,name))
+            Image.fromarray(map_array).save(os.path.join(save_loc,name))
             print(f'Saved {name}')
 
     def run(self):
@@ -71,19 +74,21 @@ class Resize_Maps:
         map_names, map_arrays = self.load_map_arrs(self.path_to_maps)
         resized_maps = []
         for map_arr in tqdm(map_arrays):
-           resized_map = self.resize_maps(map_arr,avg_y,avg_x)
+           resized_map = self.resize_maps(map_arr,avg_y,avg_x,self.spacing)
            resized_maps.append(resized_map)
-        self.save_maps(self.path_to_maps,map_names,resized_maps)
+        self.save_maps(self.save_loc,map_names,resized_maps)
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Resize Maps to 16.1um/px spacing')
+    parser = argparse.ArgumentParser(description='Resize Maps to desired spacing')
     parser.add_argument('--map_path', type=str, required=True, help='Path to original maps (.png)')
+    parser.add_argument('--save_loc', type=str, required=True, help='Path to save resized maps')
+    parser.add_argument('--spacing', type=float, required=True, help='resize map to this spacing')
     return parser.parse_args()
   
 
 def main():
     args = parse_args()
-    resize_maps = Resize_Maps(path_to_maps=args.map_path)
+    resize_maps = Resize_Maps(path_to_maps=args.map_path,save_loc=args.save_loc,spacing=args.spacing)
     resize_maps.run()
 
 if __name__ == '__main__':

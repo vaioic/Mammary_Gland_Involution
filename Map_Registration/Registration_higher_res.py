@@ -1,6 +1,7 @@
 import numpy as np
 import SimpleITK as sitk
 import skimage as sk
+from PIL import Image
 from scipy import ndimage
 import pandas as pd
 import os
@@ -8,6 +9,8 @@ import argparse
 from pathlib import Path
 import time
 import matplotlib.pyplot as plt
+
+Image.MAX_IMAGE_PIXELS = None  # disable PIL decompression bomb guard for large tissue images
 
 
 class Registration:

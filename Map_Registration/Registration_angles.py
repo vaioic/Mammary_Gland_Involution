@@ -1,6 +1,5 @@
 import numpy as np
 import SimpleITK as sitk
-from typing import Tuple
 import skimage as sk
 from PIL import Image
 from scipy import ndimage
@@ -10,7 +9,7 @@ import argparse
 from pathlib import Path
 import time
 import matplotlib.pyplot as plt
-import math
+
 
 class Registration:
     """ 
@@ -96,7 +95,7 @@ class Registration:
         if refine_transform_failures:
             transform_df = pd.DataFrame(refine_transform_failures)
             transform_df.to_csv(os.path.join(qc_path, f'{animal_id}_{gland}_refine_transform_failures.csv'), index=False)
-            print(f"  {len(refine_transform_failures)} cardinal point detection failure(s) written for {animal_id} {gland}")
+            print(f"  {len(refine_transform_failures)} refine transform failure(s) written for {animal_id} {gland}")
     
         if not map_region_failures and not orientation_failures and not cardinal_point_failures and not refine_transform_failures:
             print(f"  No QC failures for {animal_id} {gland}")
@@ -184,12 +183,13 @@ class Registration:
         map_region = ndimage.binary_fill_holes(map_region)
         labels = sk.measure.label(map_region)
         props = sk.measure.regionprops(labels)
+        if not map_region.any():
+            raise ValueError(f"Map region for ID '{map_id}' (grey value {grey_value}) is empty check map image and grey value key.")
         largest_obj = max(props, key=lambda p: p.area)
         largest_obj_label = largest_obj.label
         bool_map_region = (labels==largest_obj_label)
         masked_map_region = sk.img_as_ubyte(bool_map_region)
-        if not map_region.any():
-            raise ValueError(f"Map region for ID '{map_id}' (grey value {grey_value}) is empty check map image and grey value key.")
+       
         return masked_map_region
     
     def detect_cardinal_point(
@@ -250,12 +250,15 @@ class Registration:
         keys = ['north','east']
         if tissue == 'Tissue':
             directions = ('North','East')
-        if tissue == 'Tissue1':
+        elif tissue == 'Tissue1':
             directions = ('North1','East1')
-        if tissue == 'Tissue2':
+        elif tissue == 'Tissue2':
             directions = ('North2','East2')
-        if tissue == 'Tissue3':
+        elif tissue == 'Tissue3':
             directions = ('North3','East3')
+        else:
+            raise ValueError(f"Could not match tissue type")
+
         for i,d in enumerate(directions):
             grey = grey_value_df.loc[grey_value_df['Mask_IDs'] == d, 'Mask_Grey_Value'].values[0]
             print(f'Grey value for {d} is {grey}')
@@ -292,7 +295,7 @@ class Registration:
         s_y,s_x = c_y - t_y, c_x - t_x
 
         #Shift Array to new center:
-        shifted_arr = ndimage.shift(arr, [s_y,s_x], mode=mode,prefilter=prefilter,order=order)
+        shifted_arr = ndimage.shift(arr, [s_y,s_x], mode=mode,prefilter=prefilter,order=order,reshape=reshape)
 
         #Rotate array around new point:
         rotated_arr = ndimage.rotate(shifted_arr, angle_degrees, reshape=reshape,order=order, mode=mode, prefilter=prefilter)
@@ -317,6 +320,8 @@ class Registration:
         north_coord = (nx, ny)
 
         tissue_pixels = np.argwhere(mask_arr == 3)
+        if tissue_pixels.size == 0:
+            raise ValueError("ORIENTATION_MISMATCH: no tissue area found.")
         #Use centroid of mask to calculate angle of rotation
         cy, cx = tissue_pixels.mean(axis=0)  # (y, x)
         mask_centroid = (cx,cy)
@@ -326,12 +331,13 @@ class Registration:
         #Get side of image north is on
         if nx < mask_arr.shape[1]//2:
             side = 'left'
-        elif nx < mask_arr.shape[1]//2:
+        elif nx > mask_arr.shape[1]//2:
             side = 'right'
         else:
             side = 'midline'
 
         #if north on mid line, determine if on the top or bottom of image:
+        rotate = None
         if side == 'midline':
             if ny < mask_arr.shape[0]//2:
                 rotate = None
@@ -354,7 +360,7 @@ class Registration:
         # Calculate the cosine of the angle
         # Ensure the denominator is not zero to avoid division errors
         if magnitude_v1 == 0 or magnitude_v2 == 0:
-            return 0
+            raise ValueError(f"ORIENTATION_MISMATCH: zero-length vector in {name} - north point coincides with mask centroid")
         cosine_angle = dot_product / (magnitude_v1 * magnitude_v2)
 
         # Handle floating point errors that might result in a value slightly outside [-1, 1]
@@ -372,7 +378,7 @@ class Registration:
             angle_rad = np.deg2rad(angle_deg)
         elif rotate:
             angle_deg = rotate
-            angle_rad = np.deg2rad(angle_rad)
+            angle_rad = np.deg2rad(angle_deg)
 
         rotated_arr = self.rotate_array_around_center(mask_arr,angle_deg,centroid=(cy,cx))
         rotated_points = self.get_cardinal_points(rotated_arr,name,grey_value_df,tissue)
@@ -384,7 +390,7 @@ class Registration:
 
         if ex > rotated_arr.shape[1]//2:
             flip = 'hortizontal'
-        elif ex < rotated_arr.shape[1]//2:
+        else:
             flip = None
 
         print(f'Detected Rotation(degrees): {angle_deg}')
@@ -617,7 +623,6 @@ class Registration:
                     orientation_failures = []  # Bug 1 fixed
                     cardinal_point_failures = []
                     refine_transform_failures = []
-                    post_transform_orientation_failures = []
 
                     for _, row in gland_df.iterrows():
                         name = row['Image'] + '_' + row['Tissue.ID']
@@ -686,13 +691,13 @@ class Registration:
                             self.plot_registered_tissue(padded_img=pad_img_bbox,map_region=map_region,spacing=spacing,transform=transform,name=name,path_to_tissue_masks=data_path)
                         except Exception as e:                        #outer row except
                             raise RuntimeError(f"Failed processing image {name}: {e}")
-                        if saved_df_paths:
-                            concat_dfs = pd.concat(transformed_tile_dfs,ignore_index=True)
-                            save_path_concat_dfs = os.path.join(data_path,'Transformed_Coordinates_per_Animal')
-                            os.makedirs(save_path_concat_dfs,exist_ok=True)
-                            concat_dfs.to_csv(os.path.join(save_path_concat_dfs,f'{animal_id}_{gland}_Transformed_Tile_Data.csv'),index=False)
-                            self.plot_transformed_points(saved_df_paths,animal_id,gland,data_path)
-                        self.write_qc_logs(map_region_failures, orientation_failures, cardinal_point_failures, refine_transform_failures, post_transform_orientation_failures, data_path, animal_id, gland)
+                    if saved_df_paths:
+                        concat_dfs = pd.concat(transformed_tile_dfs,ignore_index=True)
+                        save_path_concat_dfs = os.path.join(data_path,'Transformed_Coordinates_per_Animal')
+                        os.makedirs(save_path_concat_dfs,exist_ok=True)
+                        concat_dfs.to_csv(os.path.join(save_path_concat_dfs,f'{animal_id}_{gland}_Transformed_Tile_Data.csv'),index=False)
+                        self.plot_transformed_points(saved_df_paths,animal_id,gland,data_path)
+                    self.write_qc_logs(map_region_failures, orientation_failures, cardinal_point_failures, refine_transform_failures, data_path, animal_id, gland)
                 except Exception as e:
                     print(f"Failed processing gland {gland} for animal {animal_id}: {e}")
                     continue

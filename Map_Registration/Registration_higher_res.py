@@ -210,7 +210,9 @@ class Registration:
         # errors (e.g. 1.0 stored as 0.9999...).  A tolerance < 0.5 is safe for
         # integer-labelled images because adjacent labels always differ by >= 1.
         gv = grey_value
-        mask = np.abs(pad_img_bbox.astype(float) - gv) < 0.5
+        lower = gv - 0.5
+        upper = gv + 0.5
+        mask = (pad_img_bbox >= lower) & (pad_img_bbox <= upper)
             
         if not mask.any():
             print(f"  WARNING: No pixels found for grey value {grey_value} in {name}")

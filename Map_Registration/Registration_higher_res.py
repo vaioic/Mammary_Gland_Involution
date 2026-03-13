@@ -117,9 +117,7 @@ class Registration:
             self,
             img_path: str
         ):
-        png = sk.io.imread(img_path)
-        grey = sk.color.rgb2gray(sk.color.rgba2rgb(png))
-        arr = sk.util.img_as_ubyte(grey)
+        arr = sk.io.imread(img_path)
         return arr
 
     def get_tissue_bbox(self,
@@ -179,10 +177,7 @@ class Registration:
             map_id,
             grey_value_df):
         grey_value = grey_value_df.loc[grey_value_df['Mapping_ID'] == map_id, 'Map_Grey_value'].values[0]
-        tolerance = 2
-        lower = grey_value - tolerance
-        upper = grey_value + tolerance 
-        map_region = (map_arr >= lower) & (map_arr <= upper)
+        map_region = (map_arr == grey_value)
         map_region = sk.img_as_ubyte(map_region)
         map_region = ndimage.binary_fill_holes(map_region)
         labels = sk.measure.label(map_region)

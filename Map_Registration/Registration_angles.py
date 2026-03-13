@@ -261,7 +261,7 @@ class Registration:
 
         for i,d in enumerate(directions):
             grey = grey_value_df.loc[grey_value_df['Mask_IDs'] == d, 'Mask_Grey_Value'].values[0]
-            print(f'Grey value for {d} is {grey}')
+            #print(f'Grey value for {d} is {grey}')
             pt = self.detect_cardinal_point(pad_img_bbox, grey, name)
             if pt is None:
                 raise ValueError(f"Could not find '{d}' point in {name}")
@@ -381,11 +381,12 @@ class Registration:
             angle_rad = np.deg2rad(angle_deg)
 
         rotated_arr = self.rotate_array_around_center(mask_arr,angle_deg,centroid=(cy,cx))
-        rotated_points = self.get_cardinal_points(rotated_arr,name,grey_value_df,tissue)
+        try:
+            rotated_points = self.get_cardinal_points(rotated_arr,name,grey_value_df,tissue)
+        except ValueError as e:
+            raise ValueError(f"CARDINAL_POINT_FAILURE: {e}")
 
         new_east = rotated_points['east']
-        print(f'New East Coords: {new_east}')
-        print(f'New array shape: {rotated_arr.shape}')
         _, ex = new_east
 
         if ex > rotated_arr.shape[1]//2:
@@ -637,7 +638,8 @@ class Registration:
                                 print(f"  Cardinal Point Detection failure logged for {name}")
                                 cardinal_point_failures.append({
                                     'Image': row['Image'],
-                                    'Tissue': row['Tissue.ID']
+                                    'Tissue': row['Tissue.ID'],
+                                    'Reason': str(e)
                                 })
                                 continue
 
@@ -649,8 +651,15 @@ class Registration:
                                     orientation_failures.append({
                                         'Image': row['Image'],
                                         'Tissue_ID': row['Tissue.ID'],
-                                        'Reason': 'Unknown, check image'
-
+                                        'Reason': str(e)
+                                    })
+                                    continue
+                                if "CARDINAL_POINT_FAILURE" in str(e):
+                                    print(f"  Cardinal point failure logged for {name} (post-rotation)")
+                                    cardinal_point_failures.append({
+                                        'Image': row['Image'],
+                                        'Tissue': row['Tissue.ID'],
+                                        'Reason': str(e)
                                     })
                                     continue
                                 raise

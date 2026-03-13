@@ -205,11 +205,12 @@ class Registration:
         Returns (x, y) in pixel coordinates, or None if not found.
         """
         
-        # Create binary mask for this grey value.
-        # Use a small tolerance instead of exact equality to avoid failures when images
-        # were saved with lossy settings or resampled previously.
+        # Create binary mask for this grey value using a tolerance of 0.5.
+        # Exact equality fails when floating-point representation introduces small
+        # errors (e.g. 1.0 stored as 0.9999...).  A tolerance < 0.5 is safe for
+        # integer-labelled images because adjacent labels always differ by >= 1.
         gv = grey_value
-        mask = (pad_img_bbox==gv)
+        mask = np.abs(pad_img_bbox.astype(float) - gv) < 0.5
             
         if not mask.any():
             print(f"  WARNING: No pixels found for grey value {grey_value} in {name}")

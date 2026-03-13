@@ -619,7 +619,7 @@ class Registration:
                     for _, row in gland_df.iterrows():
                         name = row['Image'] + '_' + row['Tissue.ID']
                         try:                                          # outer row try
-                            tissue_path = os.path.join(data_path, row['Tissue.ID'], row['Image'] + '.svs.png')
+                            tissue_path = os.path.join(data_path, row['Tissue.ID'], row['Image'] + '.png')
                             tissue_arr = self.open_mask(tissue_path)
                             img_bbox, cropped_mask = self.get_tissue_bbox(tissue_arr, row['Image'], row['Tissue.ID'], data_path)
                             pad_img_bbox, pad_mask_bbox = self.add_padding(img_bbox, cropped_mask, row['Image'], row['Tissue.ID'], data_path)

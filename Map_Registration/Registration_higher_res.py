@@ -234,6 +234,7 @@ class Registration:
             pad_img_bbox,
             name,
             grey_value_df,
+            directions=None
             ):
         """
         Extract one or more cardinal points from an image.
@@ -251,9 +252,9 @@ class Registration:
         """
         points = {'north':[],
                   'east':[]}
-        keys = ['north','east']
-
-        for direction in keys:
+        if directions == None:
+            directions = ['north', 'east']
+        for direction in directions:
             grey = grey_value_df.loc[grey_value_df['Mask_IDs'] == direction, 'Mask_Grey_Value'].values[0]
             #print(f'Grey value for {d} is {grey}')
             pt = self.detect_cardinal_point(pad_img_bbox, grey, name)
@@ -302,7 +303,7 @@ class Registration:
             name,
             grey_value_df,
             mask_arr,
-            tissue):
+            ):
         """
         Calculates the angle (in degrees) between three points.
 
@@ -376,7 +377,7 @@ class Registration:
 
         rotated_arr = self.rotate_array_around_center(mask_arr,angle_deg,centroid=(cy,cx))
         try:
-            rotated_points = self.get_cardinal_points(rotated_arr,name,grey_value_df)
+            rotated_points = self.get_cardinal_points(rotated_arr,name,grey_value_df,['east'])
         except ValueError as e:
             raise ValueError(f"CARDINAL_POINT_FAILURE: {e}")
 

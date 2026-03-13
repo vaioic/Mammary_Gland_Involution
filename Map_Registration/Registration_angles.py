@@ -136,8 +136,8 @@ class Registration:
         maxr = max(props, key=lambda p: p.bbox[3])
         img_bbox = tissue_arr[minc.bbox[0]-10:maxc.bbox[2]+10,minr.bbox[1]-10:maxr.bbox[3]+10]
         bool_mask = (img_bbox==largest_obj_label)
-        cropped_mask = sk.img_as_ubyte(bool_mask)
-        cropped_mask = ndimage.binary_fill_holes(cropped_mask)
+        cropped_mask = ndimage.binary_fill_holes(bool_mask)
+        cropped_mask = sk.img_as_ubyte(cropped_mask)
         save_path_img = os.path.join(data_path,tissue_id,'cropped_image')
         save_path_mask = os.path.join(data_path,tissue_id,'cropped_mask')
         os.makedirs(save_path_img,exist_ok=True)
@@ -295,7 +295,7 @@ class Registration:
         s_y,s_x = c_y - t_y, c_x - t_x
 
         #Shift Array to new center:
-        shifted_arr = ndimage.shift(arr, [s_y,s_x], mode=mode,prefilter=prefilter,order=order,reshape=reshape)
+        shifted_arr = ndimage.shift(arr, [s_y,s_x], mode=mode,prefilter=prefilter,order=order)
 
         #Rotate array around new point:
         rotated_arr = ndimage.rotate(shifted_arr, angle_degrees, reshape=reshape,order=order, mode=mode, prefilter=prefilter)

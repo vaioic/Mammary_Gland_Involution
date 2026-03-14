@@ -639,7 +639,7 @@ class Registration:
                                 continue
 
                             try:                                      # orientation try
-                                angle_degrees, angle_radians, flip = self.calculate_angle_and_flip(points, name, grey_value_df, pad_img_bbox, row['Tissue.ID'])
+                                angle_degrees, angle_radians, flip = self.calculate_angle_and_flip(points, name, grey_value_df, pad_img_bbox)
                             except ValueError as e:
                                 if "ORIENTATION_MISMATCH" in str(e):
                                     print(f"  Orientation failure logged for {name}")

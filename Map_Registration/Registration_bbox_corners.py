@@ -707,7 +707,7 @@ class Registration:
                             sitk_imgs.append(sitk_fixed)
                             sitk_regions.append(sitk_moving)
                             try:
-                                transform = self.build_bbox_corner_transform(sitk_moving, sitk_fixed, angle_radians, flip, angle_degrees, row['Corner']) #change to column name that abby gives it
+                                transform = self.build_bbox_corner_transform(sitk_moving, sitk_fixed, angle_radians, flip, angle_degrees, row['RegistrationLoc']) #change to column name that abby gives it
                                 transforms.append(transform)
                             except ValueError:
                                 print(f"  Transform error logged for {name}")

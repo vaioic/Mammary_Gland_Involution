@@ -712,8 +712,8 @@ class Registration:
                                 continue
 
                             sitk_fixed, sitk_moving = self.load_sitk_imgs(map_region, pad_mask_bbox, spacing)
-                            sitk_imgs.append(sitk_fixed)
-                            sitk_regions.append(sitk_moving)
+                            sitk_imgs.append(sitk_moving)
+                            sitk_regions.append(sitk_fixed)
                             try:
                                 transform = self.build_bbox_corner_transform(sitk_moving, sitk_fixed, angle_radians, flip, angle_degrees, row['RegistrationLoc']) #change to column name that abby gives it
                                 transforms.append(transform)

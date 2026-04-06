@@ -167,8 +167,8 @@ class Registration:
         max_dim = max(img_bbox.shape)
         padding_y = (max_dim - img_bbox.shape[0]) // 2
         padding_x = (max_dim - img_bbox.shape[1]) // 2
-        pad_img_bbox = np.pad(img_bbox,((padding_y+100,padding_y+100),(padding_x+100,padding_x+100)),mode='constant',constant_values=0)
-        pad_mask_bbox_bool = np.pad(cropped_mask,((padding_y+100,padding_y+100),(padding_x+100,padding_x+100)),mode='constant',constant_values=0)
+        pad_img_bbox = np.pad(img_bbox,((padding_y+300,padding_y+300),(padding_x+300,padding_x+300)),mode='constant',constant_values=0)
+        pad_mask_bbox_bool = np.pad(cropped_mask,((padding_y+300,padding_y+300),(padding_x+300,padding_x+300)),mode='constant',constant_values=0)
         pad_mask_bbox = sk.img_as_ubyte(pad_mask_bbox_bool)
         save_path_img = os.path.join(data_path,tissue_id,'padded_cropped_image')
         save_path_mask = os.path.join(data_path,tissue_id,'padded_cropped_mask')

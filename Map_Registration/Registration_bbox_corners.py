@@ -728,7 +728,7 @@ class Registration:
 
                             tile_coordinates = tile_centroid_df_gland[
                                 (tile_centroid_df_gland['Tiles_Image'] == row['Image']) &
-                                (tile_centroid_df_gland['Tiles_Parent'] == row['Tissue.ID'])
+                                (tile_centroid_df_gland['Tiles_Tissue_ID'] == row['Tissue.ID'])
                                 ]
                             df_path, transformed_tile_df = self.transform_points(transform, tile_coordinates, data_path, name)
                             saved_df_paths.append(df_path)

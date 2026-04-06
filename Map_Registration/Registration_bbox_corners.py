@@ -446,6 +446,8 @@ class Registration:
 
         # GetBoundingBox returns (start_x, start_y, size_x, size_y) in index coords
         bbox = label_stats.GetBoundingBox(1)
+        centroid = label_stats.GetCentroid()
+        xc,yc = centroid
         x0, y0, sx, sy = bbox
         x1, y1 = x0 + sx, y0 + sy  # exclusive end indices
         #mid points of all sides
@@ -460,7 +462,8 @@ class Registration:
             'top_middle' : (mx, y0),
             'bottom_middle' : (mx,y1),
             'right_middle' : (x1,my),
-            'left_middle' : (x0,my)
+            'left_middle' : (x0,my),
+            'center': (xc,yc)
         }
         return {
             key: sitk_image.TransformIndexToPhysicalPoint(idx)

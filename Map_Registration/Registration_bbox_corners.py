@@ -446,7 +446,7 @@ class Registration:
 
         # GetBoundingBox returns (start_x, start_y, size_x, size_y) in index coords
         bbox = label_stats.GetBoundingBox(1)
-        centroid = label_stats.GetCentroid()
+        centroid = label_stats.GetCentroid(1)
         xc,yc = centroid
         x0, y0, sx, sy = bbox
         x1, y1 = x0 + sx, y0 + sy  # exclusive end indices

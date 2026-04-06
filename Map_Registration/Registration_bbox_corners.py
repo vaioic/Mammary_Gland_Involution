@@ -136,7 +136,11 @@ class Registration:
         minr = min(props, key=lambda p: p.bbox[1])
         maxc = max(props, key=lambda p: p.bbox[2])
         maxr = max(props, key=lambda p: p.bbox[3])
-        img_bbox = tissue_arr[minc.bbox[0]-10:maxc.bbox[2]+10,minr.bbox[1]-10:maxr.bbox[3]+10]
+        row_start = max(0, minc.bbox[0] - 10)
+        row_end = min(tissue_arr.shape[0], maxc.bbox[2] + 10)
+        col_start = max(0, minr.bbox[1] - 10)
+        col_end = min(tissue_arr.shape[1], maxr.bbox[3] + 10)
+        img_bbox = tissue_arr[row_start:row_end, col_start:col_end]
         bool_mask = (img_bbox==largest_obj_label)
         cropped_mask = ndimage.binary_fill_holes(bool_mask)
         cropped_mask = sk.img_as_ubyte(cropped_mask)
@@ -463,12 +467,13 @@ class Registration:
             'bottom_middle' : (mx,y1),
             'right_middle' : (x1,my),
             'left_middle' : (x0,my),
-            'center': (xc,yc)
         }
-        return {
+        result = {
             key: sitk_image.TransformIndexToPhysicalPoint(idx)
             for key, idx in corners_idx.items()
         }
+        result['center'] = centroid  # already in physical coords from GetCentroid
+        return result
 
 
     def get_oriented_moving(self, sitk_moving, moving_centroid, rads, flip):

@@ -150,8 +150,8 @@ class Registration:
         os.makedirs(save_path_mask,exist_ok=True)
         sk.io.imsave(os.path.join(save_path_img,'cropped_'+name+'.png'),img_bbox,check_contrast=False)
         sk.io.imsave(os.path.join(save_path_mask,'cropped_mask_'+name+'.png'),cropped_mask,check_contrast=False)
-        return img_bbox, cropped_mask
-    
+        return img_bbox, cropped_mask, row_start, col_start
+
     def add_padding(
             self,
             img_bbox,
@@ -159,7 +159,7 @@ class Registration:
             name,
             tissue_id,
             data_path):
-        """ 
+        """
         reshape the cropped images to a square based on the largest dim using padding
         saves new arrays with added padding of a constant value: 255 for grey scale image, 0 for masks
         returns save path for later use
@@ -176,7 +176,7 @@ class Registration:
         os.makedirs(save_path_mask,exist_ok=True)
         sk.io.imsave(os.path.join(save_path_img,'padded_cropped_'+name+'.png'),pad_img_bbox,check_contrast=False)
         sk.io.imsave(os.path.join(save_path_mask,'padded_cropped_mask_'+name+'.png'),pad_mask_bbox,check_contrast=False)
-        return pad_img_bbox,pad_mask_bbox
+        return pad_img_bbox, pad_mask_bbox, padding_x, padding_y
     
     def get_map_region(
             self,
@@ -586,18 +586,39 @@ class Registration:
         return composite_transform
 
     
-    def transform_points(self,transform,tile_df,path_to_tissue_masks,name):
-        save_path = os.path.join(path_to_tissue_masks,'Transformed_Coordinates')
-        os.makedirs(save_path,exist_ok=True)
-        save_df = os.path.join(save_path,name+'_Transformed_Coordinates.csv')
+    def transform_points(self, transform, tile_df, path_to_tissue_masks, name,
+                         row_start, col_start, padding_x, padding_y, spacing):
+        """
+        Apply the inverse registration transform to tile centroid coordinates.
+
+        The transform is defined in the physical space of the padded cropped mask
+        (origin at pixel (0,0) of that image, spacing in µm/pixel). Tile centroids
+        are in the original full-slide scan's µm space, so they must be shifted into
+        the padded-mask physical space before the inverse transform is applied.
+
+        Offset derivation (x axis; y is symmetric with row/padding_y):
+          scan pixel x  = tile_x_um / spacing
+          cropped pixel x = scan pixel x - col_start
+          padded pixel x  = cropped pixel x + (padding_x + 300)
+          padded physical x = padded pixel x * spacing
+                            = tile_x_um + (padding_x + 300 - col_start) * spacing
+        """
+        save_path = os.path.join(path_to_tissue_masks, 'Transformed_Coordinates')
+        os.makedirs(save_path, exist_ok=True)
+        save_df = os.path.join(save_path, name + '_Transformed_Coordinates.csv')
         inverse_transform = transform.GetInverse()
-        transformed = tile_df.apply(
-            lambda row: inverse_transform.TransformPoint((row['Tiles_Centroid_X_um'], row['Tiles_Centroid_Y_um'])),
-            axis=1)
+        sx, sy = spacing
+
+        def _transform_row(r):
+            moving_x = r['Tiles_Centroid_X_um'] + (padding_x + 300 - col_start) * sx
+            moving_y = r['Tiles_Centroid_Y_um'] + (padding_y + 300 - row_start) * sy
+            return inverse_transform.TransformPoint((moving_x, moving_y))
+
+        transformed = tile_df.apply(_transform_row, axis=1)
         tile_df['Tiles_Transformed_X_um'] = transformed.apply(lambda p: p[0])
         tile_df['Tiles_Transformed_Y_um'] = transformed.apply(lambda p: p[1])
-        tile_df.to_csv(save_df,index=False)
-        return save_df,tile_df
+        tile_df.to_csv(save_df, index=False)
+        return save_df, tile_df
 
     def plot_transformed_points(self,saved_dfs,animal_id,gland,data_path):
         dfs = []
@@ -666,8 +687,8 @@ class Registration:
                         try:                                          # outer row try
                             tissue_path = os.path.join(data_path, row['Tissue.ID'], row['Image'] + '.png')
                             tissue_arr = self.open_mask(tissue_path)
-                            img_bbox, cropped_mask = self.get_tissue_bbox(tissue_arr, row['Image'], row['Tissue.ID'], data_path)
-                            pad_img_bbox, pad_mask_bbox = self.add_padding(img_bbox, cropped_mask, row['Image'], row['Tissue.ID'], data_path)
+                            img_bbox, cropped_mask, row_start, col_start = self.get_tissue_bbox(tissue_arr, row['Image'], row['Tissue.ID'], data_path)
+                            pad_img_bbox, pad_mask_bbox, padding_x, padding_y = self.add_padding(img_bbox, cropped_mask, row['Image'], row['Tissue.ID'], data_path)
                             try:
                                 points = self.get_cardinal_points(pad_img_bbox, name, grey_value_df)
                             except ValueError as e:
@@ -730,7 +751,7 @@ class Registration:
                                 (tile_centroid_df_gland['Tiles_Image'] == row['Image']) &
                                 (tile_centroid_df_gland['Tiles_Tissue_ID'] == row['Tissue.ID'])
                                 ]
-                            df_path, transformed_tile_df = self.transform_points(transform, tile_coordinates, data_path, name)
+                            df_path, transformed_tile_df = self.transform_points(transform, tile_coordinates, data_path, name, row_start, col_start, padding_x, padding_y, spacing)
                             saved_df_paths.append(df_path)
                             transformed_tile_dfs.append(transformed_tile_df)
                         except Exception as e:                        #outer row except

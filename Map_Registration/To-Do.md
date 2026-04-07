@@ -1,4 +1,4 @@
 # Troubleshooting
 
 Check if the top-middle reference point is calculated accurately
-Check implementation of the transformation matrix on the tile centroids
+Check implementation of the transformation matrix on the tile centroids - added in the offset needed for correct application of transformation

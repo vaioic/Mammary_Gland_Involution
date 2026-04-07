@@ -470,7 +470,6 @@ class Registration:
             key: sitk_image.TransformIndexToPhysicalPoint(idx)
             for key, idx in corners_idx.items()
         }
-        result['center'] = centroid  # already in physical coords from GetCentroid
         return result
 
 
